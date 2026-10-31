@@ -250,11 +250,10 @@ hot-swap гнёзд), поэтому моделируется после раз�
   выпустить сертификат Developer ID Application, сохранить профиль `notarytool`,
   собрать и нотаризовать первый zip, проверить на чужом маке (лучше Apple Silicon).
   После смены подписи заново выдать себе Automation → Terminal.
-* **Публичный git-репозиторий**: `git init` (сейчас проект не под git), `.gitignore`
-  (`.build/`, `build.noindex/`, `~/.agentlight`-артефакты, сборка прошивки),
-  лицензия (код и железо — возможно, разные: MIT + CERN-OHL), вычистить личное
-  (пути `/Users/…`, Team ID, серийники, логи хуков в `tools/hook-capture/`),
-  README с фото/гифкой. Не коммитить сертификаты и пароли `notarytool`.
+* **Публичный git-репозиторий** [github.com/grisha-gu/agentlight](https://github.com/grisha-gu/agentlight):
+  **приватный с 2026-10-31** (`.gitignore`, лицензии MIT / CERN-OHL-P-2.0 / CC-BY-4.0,
+  личное вычищено). Открыть после сборки rev. a: README и docs/ на английском,
+  фото/гифка. Не коммитить сертификаты и пароли `notarytool`.
   При открытии репо — свой USB VID/PID вместо дефолта Pico SDK `2E8A:000A`
   (`firmware/src/usb_descriptors.c`): заявка в pid.codes (VID 1209, нужен публичный
   репо с открытой лицензией) или в Raspberry Pi `usb-pid`. Отложено 2026-10-31.
