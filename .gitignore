@@ -18,3 +18,6 @@ fp-info-cache
 
 # local captures
 tools/hook-capture/hooks.log
+
+# internal development notes (build plan, decision log, original Russian docs) — not published
+notes/

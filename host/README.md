@@ -1,28 +1,30 @@
-# host — демон и CLI для macOS
+# host — macOS daemon and CLI
 
-Устройство и решения — [docs/05-host-macos.md](../docs/05-host-macos.md),
-логика слотов — [docs/01-architecture.md](../docs/01-architecture.md).
+Design: [docs/05-host-macos.md](../docs/05-host-macos.md); slot logic:
+[docs/01-architecture.md](../docs/01-architecture.md).
 
 ```
-Sources/AgentLightKit/   вся логика без UI: HookEvent, SlotStateMachine, SlotAllocator,
-                         StateStore, Config, DeviceProtocol, транспорты HID/CDC/fake,
-                         HTTPServer, HookInstaller, TerminalCapture
-Sources/agentlightd/     демон: склейка (Daemon.swift) + MenuBar/ (иконка и popover)
-Sources/agentlight/      CLI
-Tests/                   swift test — без железа и без Claude Code
-scripts/build-app.sh     сборка AgentLight.app
+Sources/AgentLightKit/   all logic, no UI: HookEvent, SlotStateMachine, SlotAllocator,
+                         StateStore, Config, DeviceProtocol, HID/CDC/fake transports,
+                         HTTPServer, HookInstaller, TerminalCapture, TerminalFocus
+Sources/agentlightd/     the daemon: wiring (Daemon.swift) + MenuBar/ (icon, popover, settings)
+Sources/agentlight/      the CLI
+Tests/                   swift test — no hardware, no Claude Code needed
+scripts/build-app.sh     builds AgentLight.app
 ```
 
-## Разработка
+Requires macOS 13+ and Swift 6 (Xcode 16+).
+
+## Development
 
 ```bash
 cd host
 swift test
-swift run agentlightd --fake-device          # светофоры в терминале, клавиши 1–4 = кнопки
+swift run agentlightd --fake-device          # lights drawn in the terminal, keys 1–4 = buttons
 swift run agentlight replay ../tools/hook-capture/samples.jsonl
 ```
 
-Чтобы не трогать настоящие `~/.agentlight` и порт 48879, поднимай отдельную копию:
+To keep your real `~/.agentlight` and port 48879 untouched, run a separate instance:
 
 ```bash
 mkdir -p /tmp/al && echo '{"port":48880}' > /tmp/al/config.json
@@ -30,56 +32,66 @@ AGENTLIGHT_HOME=/tmp/al swift run agentlightd --transport cdc
 AGENTLIGHT_HOME=/tmp/al swift run agentlight status
 ```
 
-`agentlightd --snapshot DIR` рендерит иконку и popover в PNG и выходит — удобно,
-когда нет доступа к экрану.
+`agentlightd --snapshot DIR` renders the menu bar icon and popover to PNG files and
+exits.
 
-## Установка
+## Installing
+
+From Homebrew:
+
+```bash
+brew install --cask grisha-gu/tap/agentlight
+```
+
+From source:
 
 ```bash
 host/scripts/build-app.sh --install    # /Applications/AgentLight.app + /usr/local/bin/agentlight
-agentlight install-daemon              # LaunchAgent, старт при входе
-agentlight install-hooks               # хуки в ~/.claude/settings.json (резервная копия рядом)
+```
+
+Then:
+
+```bash
+agentlight install-daemon              # LaunchAgent, starts at login
+agentlight install-hooks               # hooks in ~/.claude/settings.json (a backup is written next to it)
 agentlight doctor
 ```
 
-Удаление: `agentlight uninstall-hooks && agentlight uninstall-daemon`.
+Uninstall: `agentlight uninstall-hooks && agentlight uninstall-daemon`.
 
-### Подпись и Automation
+### Signing and Automation
 
-Сборка всегда universal (arm64 + x86_64). `build-app.sh` подписывает первым, что найдёт:
-**Developer ID Application** → самоподписанный «AgentLight Dev» → ad-hoc
-(можно задать явно: `SIGN_IDENTITY="…" scripts/build-app.sh`).
-Разрешения TCC привязаны к подписи и bundle id (`dev.grisha-gu.agentlight`): сменилось
-одно из них — Automation выдаётся заново. Состояние разрешения показывает `agentlight doctor`.
+Builds are always universal (arm64 + x86_64). `build-app.sh` signs with the first
+identity it finds: **Developer ID Application** → a self-signed "AgentLight Dev"
+certificate → ad-hoc (override with `SIGN_IDENTITY="…" scripts/build-app.sh`).
+macOS permissions are bound to the signature and the bundle id
+(`dev.grisha-gu.agentlight`); if either changes, Automation has to be granted again.
+`agentlight doctor` shows the permission state.
 
-* При первом нажатии кнопки фокуса macOS спросит «AgentLight хочет управлять Terminal» →
-  «Разрешить». Если отказали: Системные настройки → Конфиденциальность и безопасность →
-  Автоматизация → AgentLight → Terminal.
-* «AgentLight Dev» (только для своего мака): Связка ключей → Ассистент сертификации →
-  Создать сертификат, тип «Подписывание кода».
+* On the first focus button press macOS asks "AgentLight wants to control Terminal" →
+  **Allow**. If it was denied: System Settings → Privacy & Security → Automation →
+  AgentLight → Terminal.
+* A self-signed "AgentLight Dev" certificate (for your own Mac only): Keychain Access →
+  Certificate Assistant → Create a Certificate, type "Code Signing".
 
-### Раздача на другие маки
+### Releases
 
-Один раз:
-1. developer.apple.com → Certificates → **Developer ID Application** (создать может только
-   Account Holder), CSR — из Связки ключей; скачанный `.cer` открыть двойным кликом.
-2. appleid.apple.com → Пароли приложений → создать, затем
-   `xcrun notarytool store-credentials agentlight-notary --apple-id <почта> --team-id <TEAM_ID>`.
-
-Каждый релиз: `scripts/build-app.sh --dist` → подпись, нотаризация, степлер,
-`build.noindex/AgentLight-<версия>.zip`. Или тег `v<версия>` — то же самое сделает
-GitHub Actions и выложит zip в Releases (docs/06-build-plan.md §6.9). У получателя:
+`scripts/build-app.sh --dist` signs with Developer ID, notarizes, staples and writes
+`build.noindex/AgentLight-<version>.zip`. It needs a Developer ID Application
+certificate and a `notarytool` keychain profile:
 
 ```bash
-# распаковать, перетащить AgentLight.app в /Applications, затем
-sudo ln -sf /Applications/AgentLight.app/Contents/MacOS/agentlight /usr/local/bin/agentlight
-agentlight install-daemon && agentlight install-hooks
+xcrun notarytool store-credentials agentlight-notary --apple-id <email> --team-id <TEAM_ID>
 ```
 
-## Транспорты
+Pushing a `v<version>` tag does the same in GitHub Actions
+([`.github/workflows/release.yml`](../.github/workflows/release.yml)), attaches the zip
+to the release and bumps the Homebrew cask.
 
-| | когда | заметки |
+## Transports
+
+| | When | Notes |
 |---|---|---|
-| HID | основной, когда в прошивке появится vendor HID | VID 1209/2E8A, usage page 0xFF00 |
-| CDC | сейчас, пока прошивка умеет только ASCII | порт ищется сам (ответ `OK agentlight` на `HELLO`), или `cdc_port` в config.json |
-| fake | `--fake-device` | ANSI в терминале; лог уходит в `~/.agentlight/agentlightd.log` |
+| HID | default | VID `1209` / `2E8A`, usage page `0xFF00` |
+| CDC | debugging (`--transport cdc`) | the port is found automatically (replies `OK agentlight` to `HELLO`), or set `cdc_port` in config.json |
+| fake | `--fake-device` | ANSI in the terminal; the log goes to `~/.agentlight/agentlightd.log` |

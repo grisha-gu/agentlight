@@ -1,16 +1,16 @@
 # hook-capture
 
-Инструмент, которым закрыт главный риск проекта: что именно Claude Code
-отправляет хуками типа `http`. Результаты и выводы —
-[docs/05-host-macos.md §5.3](../../docs/05-host-macos.md).
+A logging HTTP server that records exactly what Claude Code sends with `http` hooks.
+Findings: [docs/05-host-macos.md §5.3](../../docs/05-host-macos.md#53-receiving-hooks-over-http).
 
-## Запуск
+## Usage
 
 ```bash
-python3 hookcap.py            # слушает 127.0.0.1:48879, пишет hooks.log
+python3 hookcap.py            # listens on 127.0.0.1:48879, writes hooks.log
 ```
 
-Затем прописать в `.claude/settings.json` проекта:
+Stop the AgentLight daemon first if it is running (it uses the same port). Then add to
+a project's `.claude/settings.json`:
 
 ```json
 { "hooks": { "PreToolUse": [ { "hooks": [
@@ -18,15 +18,15 @@ python3 hookcap.py            # слушает 127.0.0.1:48879, пишет hooks
 ] } ] } }
 ```
 
-Изменения `settings.json` подхватываются **на лету**, перезапуск сессии не нужен.
+Changes to `settings.json` are picked up live; no session restart is needed.
 
-## Что внутри
+## Contents
 
-* `hookcap.py` — логирующий сервер: метод, путь, заголовки, тело. Отвечает 204.
-* `samples.jsonl` — реальные снятые запросы (пути обезличены).
+* `hookcap.py` — the logging server: method, path, headers, body. Replies 204.
+* `samples.jsonl` — real captured requests (paths anonymised).
 
-## Зачем держать это в репозитории
+## Why it is in the repository
 
-`samples.jsonl` — фикстура для тестов `AgentLightKit`: декодер `HookEvent`
-должен разбирать эти тела и игнорировать незнакомые поля. Когда формат у
-Claude Code поменяется, достаточно перезапустить захват и обновить фикстуру.
+`samples.jsonl` is a test fixture for `AgentLightKit`: the `HookEvent` decoder must
+parse these bodies and ignore unknown fields. When Claude Code changes the format,
+re-run the capture and update the fixture.

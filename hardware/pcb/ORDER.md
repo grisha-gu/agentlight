@@ -1,70 +1,70 @@
-# Заказ платы на JLCPCB
+# Ordering the board from JLCPCB
 
-Все файлы — в `build/jlc/` (пересобираются `./build.sh`):
+All files are generated into `build/jlc/` by `./build.sh`:
 
-| Файл | Куда |
+| File | Where it goes |
 |---|---|
-| `agentlight-gerbers.zip` | шаг 1, «Add gerber file» |
-| `agentlight-bom.csv` | шаг 3, BOM |
-| `agentlight-cpl.csv` | шаг 3, CPL (Pick & Place) |
+| `agentlight-gerbers.zip` | step 1, "Add gerber file" |
+| `agentlight-bom.csv` | step 3, BOM |
+| `agentlight-cpl.csv` | step 3, CPL (pick & place) |
 
-Номера деталей сверены с каталогом JLCPCB 2026-10-28; наличие на складе показывает только сам заказ.
+Stock changes; the order page shows what is actually available.
 
-## 1. Плата
+## 1. Board
 
-На jlcpcb.com → **Order now** → загрузить `agentlight-gerbers.zip`. Размер (91 × 91 мм) и
-2 слоя он подхватит сам. Остальное:
+On jlcpcb.com → **Order now** → upload `agentlight-gerbers.zip`. Size (91 × 91 mm) and
+2 layers are detected automatically. Then:
 
-* **PCB Qty** — 5 (минимум, дешевле не бывает).
-* **PCB Thickness** — 1.6 мм. **Surface Finish** — HASL lead-free.
-* **PCB Color** — любой: под панелью платы не видно. Зелёный — самый быстрый и дешёвый.
-* **Mark on PCB** (номер заказа на шелкографии) — **Remove Mark**: иначе завод напечатает номер
-  где ему удобно, возможно поверх подписей.
+* **PCB Qty** — 5 (the minimum).
+* **PCB Thickness** — 1.6 mm. **Surface Finish** — HASL lead-free.
+* **PCB Color** — any; the board is hidden behind the panel.
+* **Mark on PCB** — **Remove Mark**, otherwise the order number may land on top of the
+  silkscreen labels.
 
-## 2. Монтаж
+## 2. Assembly
 
-Включить **PCB Assembly**:
+Enable **PCB Assembly**:
 
-* **PCBA Type** — **Standard**: гнёзда Kailh (и THT-гнёзда модуля) Economic не ставит.
-* **Assembly Side** — **Bottom Side** (все детали на обратной стороне).
-* **PCBA Qty** — 2 (одна в устройство, одна запасная) или все 5, если по деньгам разница небольшая.
+* **PCBA Type** — **Standard** (Economic does not place the Kailh sockets or the
+  through-hole module sockets).
+* **Assembly Side** — **Bottom Side** (every factory part is on the back).
+* **PCBA Qty** — 2 or more.
 * **Tooling holes** — Added by JLCPCB.
 
-## 3. BOM и CPL
+## 3. BOM and CPL
 
-Загрузить `agentlight-bom.csv` и `agentlight-cpl.csv`. На странице деталей проверить:
+Upload `agentlight-bom.csv` and `agentlight-cpl.csv`. On the parts page check:
 
-* **10 позиций, все сопоставлены** (галочка у каждой). Если какой-то нет на складе — сказать мне,
-  подберу замену.
-* **Extended parts** — гнёзда Kailh, переключатель (C431540), гнёзда модуля: за каждую
-  extended-позицию завод берёт ~$3 за загрузку катушки, это нормально.
-* **Гнёзда Kailh SW1–SW4** — C41430893 (CPG151101S11-16; C2803348 кончился 2026-10-28).
-* **Гнёзда модуля J1–J3** — Hong Cheng HC-PM254-5.0H: 1 × 8 C27985233 (J1, J2), 1 × 7 C27985232 (J3),
-  высота 5 мм. Штырьки модуля потом укоротить до ~4 мм.
+* **10 lines, all matched.** If a part is out of stock, pick an equivalent with the
+  same footprint.
+* **Extended parts** — the Kailh sockets, the slide switch (C431540) and the module
+  sockets carry a one-off feeder fee each; that is expected.
+* **Kailh sockets SW1–SW4** — C41430893 (CPG151101S11-16).
+* **Module sockets J1–J3** — Hong Cheng HC-PM254-5.0H: 1 × 8 C27985233 (J1, J2),
+  1 × 7 C27985232 (J3), 5 mm high. The module's header pins must later be trimmed to
+  ~4 mm.
 
-## 4. Проверка расстановки
+## 4. Placement check
 
-Завод покажет детали поверх платы. Центры и повороты в CPL уже пересчитаны под футпринты JLC
-(`JLC_FIX` в `fab.py`), но проверить глазами всё равно стоит; при необходимости повернуть деталь прямо
-в окне просмотра и сказать мне — поправлю `JLC_FIX`:
+The factory shows the parts over the board. Centres and rotations in the CPL are
+already corrected for JLCPCB's footprints (`JLC_FIX` in `fab.py`), but check by eye:
 
-* **Транзисторы Q1–Q4** (под зелёными светодиодами): одиночный вывод (коллектор) смотрит **вверх,
-  к светодиоду**, два вывода — вниз.
-* **Гнёзда Kailh SW1–SW4**: две большие площадки гнезда совпадают с двумя площадками на плате
-  (пластиковый корпус между ними).
-* **Переключатель SW5**: рычажок смотрит **к краю платы**.
-* **Гнёзда модуля J1–J3**: лежат ровно на рядах отверстий вокруг контура модуля.
-* Резисторы и конденсаторы — полярности нет, достаточно, чтобы стояли на своих площадках.
+* **Transistors Q1–Q4** (below the green LEDs): the single pin (collector) points
+  **up, towards the LED**; the two pins point down.
+* **Kailh sockets SW1–SW4**: the two large socket pads match the two pads on the board.
+* **Slide switch SW5**: the lever points **towards the board edge**.
+* **Module sockets J1–J3**: exactly on the rows of holes around the module outline.
+* Resistors and capacitors have no polarity; they just need to sit on their pads.
 
-## 5. Оформление
+If something is rotated, fix it in the viewer and update `JLC_FIX` in `fab.py`.
 
-Доставка, оплата. Пока плата едет — корпус в OpenSCAD (печать — после прихода плат, по реальным размерам).
+## What arrives and what is left to do
 
-## Что придёт и что паять самому
+The factory places everything except:
 
-Завод ставит всё, кроме:
+* **12 LEDs** — soldered last, with the board screwed to the enclosure panel
+  (the back side marks `+` = anode, the long leg, and the R/Y/G rows);
+* **the RP2040-Zero** — plugged into the sockets (trim its header pins to ~4 mm first);
+* **the MX switches** — pushed into the Kailh sockets from the front, through the panel.
 
-* **12 светодиодов** — паяются последними, с платой, прикрученной к панели корпуса
-  (у каждого на обратной стороне «+» — анод, длинная ножка, «−» — катод; подписи рядов R/Y/G там же);
-* **модуля RP2040-Zero** — вставляется в гнёзда (если гнёзда 5 мм — сначала укоротить штырьки до ~4 мм);
-* **MX-свитчей** — вставляются в гнёзда Kailh снаружи, сквозь панель.
+Next: [docs/06-assembly.md](../../docs/06-assembly.md).

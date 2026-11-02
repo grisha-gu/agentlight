@@ -1,35 +1,38 @@
-# Плата agentlight rev. a
+# AgentLight PCB rev. a
 
-Плата целиком генерируется скриптами — правки вносить в них, а не в `agentlight.kicad_pcb`
-(его перезапишет следующая сборка). Описание схемы — [docs/02-hardware.md §2.7, §2.11](../../docs/02-hardware.md).
+The board is generated entirely by scripts — edit them, not `agentlight.kicad_pcb`
+(the next build overwrites it). Circuit and parts:
+[docs/02-hardware.md](../../docs/02-hardware.md).
+
+Licensed under [CERN-OHL-P-2.0](../LICENSE).
 
 ```sh
-./build.sh      # генерация с разводкой → DRC → build/jlc/ (Gerber zip, BOM, CPL) + картинки + PDF 1:1
+./build.sh      # generate + route → DRC → build/jlc/ (Gerber zip, BOM, CPL) + renders + 1:1 PDFs
 ```
 
-| Файл | Что делает |
+| File | What it does |
 |---|---|
-| `gen_board.py` | геометрия (сетка 20.32, плата 91 × 91), детали, цепи, **трассы**, контур, крепёж, заливка GND, правила |
-| `gen_module_fp.py` | футпринт RP2040-Zero в гнёздах (2 × 9 + 5 на нижнем торце) |
-| `drc.sh` | DRC сводкой, без шелкографии |
-| `fab.py` | файлы для JLCPCB: Gerber + сверловка, BOM и CPL обратной стороны |
-| `agentlight.pretty/` | свои футпринты; hot-swap Kailh — из [ebastler/marbastlib](https://github.com/ebastler/marbastlib) (CERN-OHL-P-2.0) |
+| `gen_board.py` | geometry (20.32 mm grid, 91 × 91 mm board), parts, nets, **tracks**, outline, mounting holes, GND pour, design rules |
+| `gen_module_fp.py` | RP2040-Zero pin map and outline footprint (2 × 9 side pins + 5 on the bottom edge) |
+| `drc.sh` | DRC summary, silkscreen checks excluded |
+| `fab.py` | JLCPCB outputs: Gerbers + drill, BOM and CPL for the back side |
+| `agentlight.pretty/` | custom footprints; the Kailh hot-swap footprint is adapted from [ebastler/marbastlib](https://github.com/ebastler/marbastlib) (CERN-OHL-P-2.0) |
 
-Нужен KiCad 10 (`/Applications/KiCad`).
+Requires KiCad 10 (the scripts run with KiCad's bundled Python, `pcbnew` API).
 
-Разводка ручная, по схеме (автороутер давал диагонали вразнобой и каждый раз разное):
-шина — горизонтальные трассы на лицевой стороне под модулем; у каждого слота вертикальная
-полоса на обратной стороне правее столбца, от неё отводы к резисторам; углы под 45°.
-Подробности и порядок трасс — комментарии в `gen_board.py`.
+Routing is deterministic and done by the script, not an autorouter: the bus runs as
+horizontal tracks on the front side below the module; each slot has a vertical lane on
+the back side to the right of its column, with short stubs to the resistors; all corners
+are 45°. Details are in the comments in `gen_board.py`.
 
-Как заказать — [ORDER.md](ORDER.md).
+Ordering: [ORDER.md](ORDER.md).
 
-Вручную (не в BOM/CPL завода): 12 светодиодов, сам модуль, крепёж. Гнёзда модуля J1–J3 паяет завод
-(THT); в BOM низкопрофильные 5 мм (Hong Cheng HC-PM254-5.0H).
+Hand-assembled (not in the factory BOM/CPL): 12 LEDs, the module itself, mounting
+hardware. The module sockets J1–J3 are through-hole parts placed by the factory
+(Hong Cheng HC-PM254-5.0H, 5 mm low profile).
 
-DRC ожидаемо ругается на:
+Expected DRC warnings:
 
-* углы J1–J3 (`courtyards_overlap`): нижнее гнездо стоит встык с боковыми, иначе на распиновку
-  RP2040-Zero не встать;
-* `isolated_copper`: узкие полоски заливки между трассами шины, запертые переходными, оставлены,
-  чтобы не было пустот.
+* J1–J3 corners (`courtyards_overlap`): the bottom socket butts against the side ones,
+  as the RP2040-Zero pinout requires;
+* `isolated_copper`: narrow pour slivers between bus tracks, kept to avoid voids.

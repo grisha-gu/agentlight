@@ -20,7 +20,7 @@
 #define BTN_PIN_BASE     12
 #define BTN_DEBOUNCE_MS  20
 
-// Выключатель на задней стенке: GP26, к GND = «выкл» (docs/02-hardware.md §2.12).
+// Выключатель на задней стенке: GP26, к GND = «выкл» (docs/02-hardware.md §2.5).
 #define POWER_PIN        26
 #define POWER_DEBOUNCE_MS 30
 // Огни гаснут и разгораются за то же время, что crossfade состояний.

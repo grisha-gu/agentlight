@@ -1,208 +1,170 @@
-# 04. Прошивка (RP2040)
+# 04. Firmware (RP2040)
 
-## 4.1. Стек
+## 4.1. Stack
 
-**Pico SDK (C) + TinyUSB.** Причины: прямой доступ к 14-битному PWM и жёсткому
-маппингу слайсов, TinyUSB умеет composite HID+CDC из коробки, всё документировано
-и отлаживается `picotool`/SWD.
+**Pico SDK (C) + TinyUSB.** Direct access to the 14-bit PWM and the fixed slice
+mapping, composite HID + CDC out of the box, well documented, debuggable with
+`picotool` / SWD.
 
-Альтернативы: Rust + `embassy-rp` (приятнее, но composite USB настраивать дольше),
-Arduino-core (быстрее стартовать, но меньше контроля над USB-дескрипторами).
-Для v1 — Pico SDK.
-
-## 4.2. Структура
+## 4.2. Layout
 
 ```
 firmware/
 ├── CMakeLists.txt
-├── pico_sdk_import.cmake
+├── pico_sdk_import.cmake       # from the Raspberry Pi Pico SDK (BSD-3-Clause)
 └── src/
-    ├── main.c              # init + главный цикл
-    ├── config.h            # SLOTS, пины, тайминги, калибровка яркости
-    ├── leds.c/.h           # 12 каналов PWM, гамма, калибровка, led_set()
-    ├── anim.c/.h           # стейт-машина слота, кроссфейды, welcome, пульс
-    ├── buttons.c/.h        # дебаунс, событие press
-    ├── proto.c/.h          # единый парсер команд, очередь событий
-    ├── transport_hid.c     # HID IN/OUT репорты
-    ├── transport_cdc.c     # построчный ASCII
-    ├── usb_descriptors.c   # composite: HID (vendor) + CDC
-    └── watchdog.c/.h       # контроль heartbeat от хоста
+    ├── main.c                  # init, main loop, CDC line transport, heartbeat watchdog
+    ├── config.h                # version, pins, timings, colour calibration
+    ├── leds.c/.h               # 12 PWM channels, gamma, calibration, master fade
+    ├── anim.c/.h               # per-slot state machine, crossfades, welcome, pulse, selftest
+    ├── buttons.c/.h            # debounce, press events
+    ├── power.c/.h              # rear power switch (GP26), debounce
+    ├── proto.c/.h              # shared command parser and event formatting
+    ├── transport_hid.c/.h      # vendor HID IN/OUT reports
+    ├── status_led.c/.h         # on-board RGB LED (heartbeat indicator)
+    ├── ws2812.pio              # PIO program for the on-board RGB LED
+    ├── usb_descriptors.c       # composite: vendor HID + CDC
+    └── tusb_config.h
 ```
 
-## 4.3. Главный цикл
+## 4.3. Main loop
 
-Фиксированный тик 120 Гц (8.33 мс). Ничего блокирующего, никаких `sleep_ms`
-в логике.
+A fixed 120 Hz tick (8.33 ms). Nothing blocks; no `sleep_ms` in the logic.
+Simplified:
 
 ```c
 int main(void) {
-    stdio_init_all();
-    board_uid_init();
-    leds_init();                   // 12 пинов GP0..GP11, PWM 14 бит
+    leds_init();                   // GP0..GP11, 14-bit PWM
     buttons_init();
+    power_init();
     tusb_init();
     anim_init();
-    watchdog_host_init(3000 /* ms */);
 
-    anim_power_on_wave();              // волна по 4 слотам при включении
-    proto_emit_ready();                // !READY / 0x81
+    anim_power_on_wave();          // a welcome wave across the 4 slots at power-up
+    proto_emit_ready();            // !READY / 0x81
 
     absolute_time_t next = get_absolute_time();
     while (true) {
-        tud_task();                    // USB
-        transport_hid_poll();
-        transport_cdc_poll();
+        tud_task();                // USB
+        poll_cdc_lines();
+        transport_hid_poll();      // both feed the same command queue
 
         cmd_t cmd;
         while (proto_pop(&cmd))
-            anim_apply(&cmd);          // идемпотентно
+            anim_apply(&cmd);      // idempotent
 
-        if (watchdog_host_expired()) {
+        if (host_heartbeat_expired()) {
             anim_force_all_off();
-            proto_emit_wd_trip();      // один раз на срабатывание
+            proto_emit_wd_trip();  // once per trip
         }
 
         btn_event_t ev;
         while (buttons_poll(&ev))
             proto_emit_button(ev.slot, ev.gesture, ev.t_ms);
 
-        next = delayed_by_us(next, 8333);
-        if (absolute_time_diff_us(get_absolute_time(), next) > 0) {
-            anim_tick();               // посчитать кадр
-            leds_render();             // гамма + калибровка → pwm_set_chan_level
-            sleep_until(next);
-        } else {
-            next = get_absolute_time();  // не догоняем, пропускаем кадр
-        }
+        next = delayed_by_us(next, TICK_US);
+        anim_tick();               // compute the frame
+        leds_render();             // gamma + calibration → pwm_set_gpio_level
+        sleep_until(next);         // a late frame is skipped, not caught up
     }
 }
 ```
 
-## 4.4. Рендер светодиодов
+Once a second the loop logs `!LOG tick late=… work=… us` if a frame was more than
+1 ms late or took more than 2 ms.
 
-Абстракция, за которой спрятан способ вывода — если когда-нибудь переедем на
-адресуемые светодиоды, меняется только `leds.c`:
+## 4.4. LED rendering
+
+The output method is hidden behind a small interface:
 
 ```c
 void leds_init(void);
-void led_set(uint8_t index, float level);     // index 0..11, level 0..1 (линейный, до гаммы)
-void leds_render(void);                        // level → гамма → калибровка → PWM
+void led_set(uint8_t index, float level);     // index 0..11, level 0..1 (linear, pre-gamma)
+void leds_render(void);                        // level → gamma → calibration → PWM
 ```
 
-### Инициализация PWM
+### PWM setup
 
-Маппинг жёсткий: `слайс = (gpio / 2) % 8`, канал `A` для чётных GPIO, `B` для
-нечётных. `GP0–GP11` дают 12 независимых каналов на слайсах 0–5.
+`slice = (gpio / 2) % 8`, channel `A` for even GPIOs, `B` for odd. `GP0–GP11` give
+12 independent channels on slices 0–5.
 
 ```c
 #define LED_COUNT   12
-#define PWM_WRAP    16383           // 14 бит
+#define PWM_WRAP    16383           // 14 bits
 
 void leds_init(void) {
     for (uint pin = 0; pin < LED_COUNT; pin++) {
         gpio_set_function(pin, GPIO_FUNC_PWM);
         gpio_set_drive_strength(pin, GPIO_DRIVE_STRENGTH_8MA);
         uint slice = pwm_gpio_to_slice_num(pin);
-        pwm_set_wrap(slice, PWM_WRAP);          // 125 МГц / 16384 ≈ 7.6 кГц
+        pwm_set_wrap(slice, PWM_WRAP);          // 125 MHz / 16384 ≈ 7.6 kHz
         pwm_set_clkdiv(slice, 1.0f);
         pwm_set_enabled(slice, true);
     }
 }
 ```
 
-7.6 кГц — выше любого видимого мерцания, в том числе на видео и в периферийном
-зрении. Уходить ниже 1 кГц нельзя: на камеру телефона появятся полосы.
+7.6 kHz is far above visible flicker, including on video and in peripheral vision.
+Going below ~1 kHz would show banding on phone cameras. 12 bits (30.5 kHz) still
+showed faint steps at the very bottom of a fade (1 → 2 counts out of 4095 doubles the
+brightness); 14 bits make the step 4× finer.
 
-Сначала было 12 бит (30.5 кГц), но приёмка 2026-10-23 показала слабые ступени в
-самом низу затухания: там 1 → 2 отсчёта из 4095 — скачок яркости вдвое. 14 бит
-дают в 4 раза более мелкий шаг; частота при этом всё ещё с запасом выше 1 кГц.
+### Gamma: float all the way to the PWM
 
-### Гамма: float до самого PWM
-
-Главный выигрыш перед WS2812. Устройство на столе работает на 10–20 % яркости,
-и там 8-битный выход даёт заметные ступени при затухании. Поэтому уровни от
-анимаций (уже умноженные на `BRIGHT`) хранятся во float 0..1 и разворачиваются
-в PWM одной формулой, без промежуточного округления до 8 бит:
+Levels from the animations (already multiplied by `BRIGHT`) are kept as floats 0..1
+and converted to PWM in one step, with no intermediate 8-bit rounding:
 
 ```c
 v = lroundf(powf(level, 2.2f) * LED_CAL[color] * PWM_WRAP);
 ```
 
-8 бит остаются только во входе протокола (`RAW`, `BRIGHT`). Поэтому `RAW` — инструмент
-отладки, а не плавности: уровень 5 → 4 — это −40 % яркости.
+8 bits remain only at the protocol input (`RAW`, `BRIGHT`). That makes `RAW` a
+debugging tool rather than a smooth one: going from level 5 to 4 is −40 %.
 
-Главный цикл раз в секунду пишет `!LOG tick late=… work=… us`, если кадр опоздал
-больше чем на 1 мс или занял больше 2 мс (fw 0.4.3).
+### Colour calibration
 
-### Калибровка цветов
-
-Красный, жёлтый и зелёный при одном токе воспринимаются по-разному яркими
-(глаз чувствительнее всего к 555 нм, то есть к зелёному). Выравнивается
-коэффициентами, подобранными на глаз на M1:
+Red, yellow and green at the same current look differently bright (the eye is most
+sensitive around 555 nm). Per-colour coefficients balance them:
 
 ```c
-// RED, YELLOW, GREEN — подобрать живьём за диффузором корпуса
-static const float LED_CAL[3] = { 1.00f, 0.85f, 0.95f };
-
-void leds_render(void) {
-    for (uint i = 0; i < LED_COUNT; i++) {
-        uint16_t v = fb[i] > 0 ? (uint16_t)lroundf(powf(fb[i], 2.2f) * LED_CAL[i % 3] * PWM_WRAP) : 0;
-        pwm_set_gpio_level(i, v);
-    }
-}
+// RED, YELLOW, GREEN — tune by eye behind the enclosure's diffuser
+#define LED_CAL_INIT { 1.00f, 1.00f, 0.28f }
 ```
 
-Калибровку делать **в собранном корпусе**: матовый пластик и козырёк меняют
-восприятие сильнее, чем разница в самих светодиодах.
+Calibrate in the assembled enclosure: the black plastic and the 10 mm light well
+change the perception more than the LEDs themselves.
 
-### Чего больше не нужно
+## 4.5. Animations
 
-Относительно варианта с WS2812 из прошивки удаляются: PIO-программа, DMA-канал,
-reset-импульс 280 мкс между кадрами, преобразование RGB→GRB и power limiter
-(максимум 72 мА при 220 Ω × 12 — бюджет USB не напряжён). Это примерно
-−150 строк и −1 микросхема на плате.
+Each slot is an independent mini state machine with a timeline.
 
-## 4.5. Анимации
-
-Каждый слот — независимая мини-стейт-машина с таймлайном:
-
-```c
-typedef struct {
-    slot_state_t  target;       // куда идём
-    slot_state_t  shown;        // что показываем
-    uint32_t      phase_start;  // ms
-    anim_phase_t  phase;        // PH_STEADY | PH_CROSSFADE | PH_WELCOME
-    rgb_t         from[3], to[3];
-} slot_anim_t;
-```
-
-| Анимация | Параметры |
+| Animation | Parameters |
 |---|---|
-| **crossfade** | 220 мс, easing `ease-in-out-cubic`, между любыми двумя состояниями |
-| **welcome** | 1200 мс: R fade-in 0→150, R→Y 150→300, Y→G 300→450, G hold 450→650, затем все три ярко 650→750, затухание 750→950, crossfade в целевое состояние 950→1200 |
-| **power-on wave** | welcome со сдвигом 120 мс на слот, затем всё в OFF |
-| **attn** | ровный красный. Мигания нет и включить его нельзя — удалено 2026-10-26 |
-| **busy pulse** | жёлтый дышит 1.0 ↔ 0.65 с периодом 2.2 с — глазом видно, что агент жив, а не замер. Глубина пульса нарастает за 220 мс после смены состояния, а crossfade стартует с реально горящего уровня (с пульсом) — частая смена busy ↔ idle не мигает |
-| **idle pulse** | по умолчанию выключено: зелёный ровный, чтобы не отвлекал |
-| **selftest** | по очереди каждый светодиод 80 мс, затем все R, все Y, все G, затем OFF |
+| **crossfade** | 220 ms, `ease-in-out-cubic`, between any two states |
+| **welcome** | 1200 ms: R fade-in 0→150, R→Y 150→300, Y→G 300→450, G hold 450→650, all three bright 650→750, fade 750→950, crossfade into the target state 950→1200 |
+| **power-on wave** | welcome with a 120 ms offset per slot, then everything off |
+| **attn** | steady red, no blinking |
+| **busy pulse** | yellow breathes 1.0 ↔ 0.65 with a 2.2 s period, so a working agent visibly differs from a frozen one. The pulse depth ramps in over 220 ms after a state change, and a crossfade starts from the actually lit level (pulse included), so rapid busy ↔ idle switching does not flicker |
+| **idle pulse** | off by default: steady green, not distracting |
+| **selftest** | each LED in turn (400 ms per step), then all R, all Y, all G, then off |
 
-Все переходы считаются во float и только на выходе разворачиваются в 14-битный PWM
-через гамму — поэтому затухание с 20 % до нуля идёт плавно, без ступеней.
+All transitions are computed in float and only converted to 14-bit PWM through gamma
+at the output, so fading from 20 % to zero has no steps.
 
-Правило: **анимация никогда не блокирует приём команд.** Пришёл `SET_STATE` во
-время welcome — welcome доигрывается, но `target` уже новый, и crossfade в конце
-ведёт в него.
+Rule: **an animation never blocks command handling.** If `SET_STATE` arrives during a
+welcome, the welcome finishes but the target is already updated, and the final
+crossfade goes to the new state.
 
-## 4.6. Кнопки: дебаунс
+## 4.6. Buttons: debounce
 
-Опрос в каждом тике (8.33 мс). Уровень принимается, если продержался
-`BTN_DEBOUNCE_MS` (20 мс) без дребезга; на переходе в «нажата» сразу уходит
-`BTN_PRESS` — в оба транспорта.
+Buttons are polled on every tick (8.33 ms). A level is accepted once it has been
+stable for `BTN_DEBOUNCE_MS` (20 ms); the transition to "pressed" immediately emits
+`BTN_PRESS` on both transports.
 
-Жестов (долгое, двойное) нет — **убраны 2026-10-23**: распознавание двойного
-стоило бы 350 мс задержки на каждое нажатие, а мгновенная реакция важнее.
+There are no gestures (long or double press): recognising a double press would delay
+every single press by ~350 ms, and an instant reaction matters more.
 
-## 4.7. USB-дескрипторы
+## 4.7. USB descriptors
 
 ```c
 // usb_descriptors.c — composite
@@ -220,67 +182,60 @@ static const uint8_t desc_hid_report[] = {
 };
 ```
 
-Serial-строка собирается из `pico_get_unique_board_id_string()`.
-`CFG_TUD_HID = 1`, `CFG_TUD_CDC = 1` в `tusb_config.h`.
+The serial string comes from the RP2040 flash unique ID. VID/PID: see
+[03-protocol.md §3.1](03-protocol.md#identification).
 
-## 4.8. Сборка и прошивка
+## 4.8. Building and flashing
 
 ```bash
-# один раз
+# once
 brew install cmake ninja picotool
 git clone --depth 1 --branch 2.1.1 https://github.com/raspberrypi/pico-sdk ~/pico-sdk
-cd ~/pico-sdk && git submodule update --init --depth 1   # нужен lib/tinyusb
+cd ~/pico-sdk && git submodule update --init --depth 1   # needed for lib/tinyusb
 
-# компилятор — официальный архив Arm, НЕ формула brew arm-none-eabi-gcc:
-# в формуле нет newlib, сборка падает на «cannot read spec file nosys.specs».
-# Архив ставится без sudo (cask gcc-arm-embedded — то же самое, но через .pkg).
+# compiler: use the official Arm archive, NOT the `arm-none-eabi-gcc` Homebrew formula —
+# the formula ships without newlib, and the build fails with
+# "cannot read spec file nosys.specs". The archive needs no sudo
+# (the `gcc-arm-embedded` cask is the same toolchain as a .pkg).
+# Pick the archive for your CPU (darwin-arm64 or darwin-x86_64).
 mkdir -p ~/tools && cd ~/tools
 curl -fLO https://developer.arm.com/-/media/Files/downloads/gnu/14.2.rel1/binrel/arm-gnu-toolchain-14.2.rel1-darwin-x86_64-arm-none-eabi.tar.xz
 tar xf arm-gnu-toolchain-*.tar.xz && rm arm-gnu-toolchain-*.tar.xz
 
-# сборка (плата задана в CMakeLists.txt)
+# build (the board is set in CMakeLists.txt)
 cd firmware && cmake -B build -G Ninja -DPICO_SDK_PATH=~/pico-sdk \
     -DPICO_TOOLCHAIN_PATH=~/tools/arm-gnu-toolchain-14.2.rel1-darwin-x86_64-arm-none-eabi
 cmake --build build
 
-# прошить: зажать BOOT, подключить USB → смонтируется RPI-RP2
+# flash: hold BOOT, plug in USB → the RPI-RP2 drive mounts
 cp build/agentlight.uf2 /Volumes/RPI-RP2/
-# либо, если уже прошито и USB работает:
-picotool load -f build/agentlight.uf2
 ```
 
-`picotool reboot -f -u` из хост-демона позволит делать обновление прошивки без
-залезания под корпус — заведи в `agentlight` CLI команду `agentlight flash`.
+Once AgentLight firmware is on the board, `tools/flash.sh` rebuilds and flashes
+without the BOOT button: opening the CDC port at 1200 baud reboots the RP2040 into
+BOOTSEL.
 
-## 4.9. Чеклист приёмки прошивки
+## 4.9. Test checklist
 
-Прогон: `python3 tools/proto_test.py --manual --stop-daemon` (автоматические проверки
-по CDC + ручные с вопросами y/n; `--list` — все имена, `--only` — выборочно).
-HID скрипт не проверяет — его гоняет демон.
+Run `python3 tools/proto_test.py --manual --stop-daemon`: automatic checks over CDC
+plus manual y/n questions (`--list` shows all checks and their last results, `--only`
+runs a subset, `--pending` only the manual checks not yet passed). HID is exercised by
+the daemon, not by this script.
 
-**Приёмка пройдена 2026-10-26 на fw 0.5.0** (последние результаты — `--list`, непройденные — `--pending`).
-Открыты два пункта, оба переезжают на M6 — их осмысленно делать в собранном корпусе:
-
-* [x] `HELLO` отвечает корректной версией и uid
-* [x] все команды, невалидные аргументы → `ERR` (34 случая; на fw 0.4.1 исправлены
-  переполнение/знак в числах и табы в строке)
-* [x] все 12 светодиодов зажигаются по одному через `RAW` в нужном порядке (слот 0 — левый)
-* [ ] три цвета на глаз равной яркости за диффузором корпуса (`LED_CAL` подобран) — на M6
-* [x] пульс busy (BRIGHT 255 и 30) и crossfade — без видимых ступеней и рывков (гамма, 14 бит).
-  Через `RAW 50 → 0` не проверяется: вход `RAW` 8 бит до гаммы, внизу ступени неизбежны.
-  Рывки на fw 0.4.2 — пульс включался/выключался мгновенно при смене цели; fw 0.5.0
-  вводит его за 220 мс и стартует crossfade с реально горящего уровня
-* [x] снять на телефон: никаких полос и мерцания (PWM 7.6 кГц, fw 0.4.2)
-* [x] переключение `SET 0 busy` ↔ `SET 0 idle` 200 раз/с — все 1000 ответов, без `!WD`,
-  на глаз без вспышек (fw 0.5.0)
-* [x] welcome не ломается, если в середине пришло новое состояние
-* [x] повторный `SET` с тем же состоянием не перезапускает анимацию
-* [x] отключение heartbeat → через 3 с всё гаснет + `!WD trip` ровно один раз
-* [x] переподключение USB → `!READY`, светофоры погашены до команд хоста
-* [x] все 4 кнопки дают `!BTN n press`, ложных срабатываний нет при стуке по столу
-* [ ] все 12 на полную (`RAW ff` ×12 — `SELFTEST` зажигает максимум 4 сразу): ток мультиметром < 120 мА
-  — не мерили, перенесено в M6 (§6.8 п. 9)
-* [x] устройство не греется, модуль RP2040 тёплый максимум
-* [x] выключатель (fw 0.6.0, `--only power`, проверено проводом 2026-10-27): провод GP26 → GND — `!POWER off` один раз, огни и
-  встроенный RGB плавно гаснут за 220 мс, кнопки молчат, `HELLO` говорит `power=off`; провод убрать —
-  `!POWER on`, огни разгораются с состоянием, присланным в «выкл»
+* [ ] `HELLO` reports the right version and uid
+* [ ] every command; invalid arguments → `ERR`
+* [ ] all 12 LEDs light one by one via `RAW` in the right order (slot 0 = leftmost)
+* [ ] the three colours look equally bright behind the diffuser (`LED_CAL` tuned)
+* [ ] busy pulse (at `BRIGHT` 255 and 30) and crossfades show no visible steps or jerks
+* [ ] filmed with a phone: no banding or flicker
+* [ ] `SET 0 busy` ↔ `SET 0 idle` at 200 switches/s: every reply arrives, no `!WD`, no visible flashes
+* [ ] welcome survives a new state arriving mid-animation
+* [ ] repeating `SET` with the same state does not restart the animation
+* [ ] heartbeat stops → after 3 s everything goes dark and `!WD trip` is sent exactly once
+* [ ] USB reconnect → `!READY`, lights stay off until the host sends state
+* [ ] all 4 buttons send `!BTN n press`; no false triggers when tapping the desk
+* [ ] all 12 LEDs at full (`RAW ff` × 12): current < 120 mA
+* [ ] the module stays at most warm
+* [ ] power switch: `!POWER off` once, LEDs and the on-board RGB fade out in 220 ms,
+  buttons are silent, `HELLO` says `power=off`; switching on → `!POWER on`, LEDs fade
+  in with the state sent while off

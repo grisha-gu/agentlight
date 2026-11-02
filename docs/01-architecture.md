@@ -1,155 +1,162 @@
-# 01. Архитектура
+# 01. Architecture
 
-## 1.1. Почему нужен демон
+## 1.1. Why a daemon
 
-vibesignal сделан stateless: каждый хук — отдельный короткоживущий процесс, который
-пишет JSON-файл и сразу красит одну коммерческую лампу. Нам так нельзя:
+A stateless design — every hook is a short-lived process that recolours a lamp and
+exits — is not enough here:
 
-* нужно держать **4 независимых слота** и помнить, какой `session_id` в каком слоте;
-* нужно **читать кнопки** — кто-то должен постоянно висеть на USB и слушать устройство;
-* нужно **гасить светофоры**, если агент умер без `SessionEnd`;
-* нужен **один владелец USB-устройства** (hot-plug, reconnect, heartbeat).
+* the device has **4 independent slots**, and something has to remember which
+  `session_id` lives in which slot;
+* the **buttons must be read**, so something has to stay connected to the device;
+* a light must **go dark when an agent dies** without sending `SessionEnd`;
+* the USB device needs **a single owner** that handles hot-plug, reconnects and the
+  heartbeat.
 
-Поэтому: резидентный демон `agentlightd` как LaunchAgent + stateless-хуки, которые
-только отправляют событие в демон.
+So the host side is a resident daemon, `agentlightd`, running as a LaunchAgent, plus
+stateless hooks that only forward events to it.
 
-## 1.2. Состояния слота
+## 1.2. Slot states
 
 ```
         SessionStart
-   OFF ─────────────► WELCOME ──► IDLE (зелёный)
+   OFF ─────────────► WELCOME ──► IDLE (green)
     ▲                               │  ▲
     │                UserPromptSubmit│  │ Stop
     │ SessionEnd                     ▼  │ Notification(agent_completed)
-    │ / watchdog                   BUSY (жёлтый)
+    │ / watchdog                   BUSY (yellow)
     │                               │  ▲
     │          PermissionRequest    │  │ PreToolUse / PostToolUse
     │          Notification(...)    ▼  │ PermissionDenied
-    └──────────────────────────── ATTN (красный)
+    └──────────────────────────── ATTN (red)
 ```
 
-Четыре видимых состояния + одно переходное:
+Four visible states plus one transient one:
 
-| Код | Свет | Смысл |
+| Code | Light | Meaning |
 |---|---|---|
-| `OFF` | ничего | слот свободен, агента нет |
-| `WELCOME` | анимация ~1.2 с | слот только что занят |
-| `IDLE` | зелёный | агент жив, ждёт твой ввод |
-| `BUSY` | жёлтый | агент думает / крутит инструменты |
-| `ATTN` | красный | агент заблокирован, ждёт решения |
+| `OFF` | dark | the slot is free, no agent |
+| `WELCOME` | ~1.2 s animation | the slot has just been taken |
+| `IDLE` | green | the agent is alive and waiting for your input |
+| `BUSY` | yellow | the agent is thinking or running tools |
+| `ATTN` | red | the agent is blocked and waiting for a decision |
 
-## 1.3. Маппинг хуков Claude Code → состояния
+## 1.3. Mapping Claude Code hooks to states
 
-Все хуки получают `session_id`, `transcript_path`, `cwd`, `hook_event_name`.
-Полный список событий и их полей: `https://code.claude.com/docs/en/hooks`.
+Every hook receives `session_id`, `transcript_path`, `cwd` and `hook_event_name`.
+The full list of events and their fields: <https://code.claude.com/docs/en/hooks>.
 
-| Хук | Матчер | Переход | Тип хука |
+| Hook | Matcher | Transition | Hook type |
 |---|---|---|---|
-| `SessionStart` | — | claim слота → `WELCOME` → `IDLE` | **command** (нужны env терминала) |
+| `SessionStart` | — | claim a slot → `WELCOME` → `IDLE` | **command** (needs the terminal's environment) |
 | `UserPromptSubmit` | — | → `BUSY` | http |
 | `PreToolUse` | — | → `BUSY` (keepalive) | http |
 | `PostToolUse` | — | → `BUSY` (keepalive) | http |
 | `PostToolUseFailure` | — | → `BUSY` | http |
 | `PermissionRequest` | — | → `ATTN` | http |
+| `PermissionDenied` | — | → `BUSY` | http |
 | `Notification` | `permission_prompt` | → `ATTN` | http |
-| `Notification` | `idle_prompt` | **игнорировать** (см. ниже) | http |
+| `Notification` | `idle_prompt` | **ignored** (see below) | http |
 | `Notification` | `agent_needs_input` | → `ATTN` | http |
 | `Notification` | `elicitation_dialog`, `elicitation_url_dialog` | → `ATTN` | http |
 | `Notification` | `agent_completed` | → `IDLE` | http |
 | `Elicitation` | — | → `ATTN` | http |
 | `Stop` | — | → `IDLE` | http |
-| `StopFailure` | — | → `ATTN` (ошибка API — нужен человек) | http |
-| `SubagentStart` / `SubagentStop` | — | **не меняет** состояние (только продлевает жизнь сессии) | http |
-| `PreCompact` / `PostCompact` | — | **не меняет** состояние | — |
-| `SessionEnd` | — | release слота → `OFF` | http |
+| `StopFailure` | — | → `ATTN` (API error — a human is needed) | http |
+| `SubagentStart` / `SubagentStop` | — | **no state change** (only extends the session's lifetime) | http |
+| `PreCompact` / `PostCompact` | — | **no state change** | — |
+| `SessionEnd` | — | release the slot → `OFF` | http |
 
-### Почему `idle_prompt` нельзя вести в `ATTN` (проверено 2026-10-05)
+### Why `idle_prompt` does not mean `ATTN`
 
-Изначально я отнёс `Notification(idle_prompt)` к «требуется ввод» → красный.
-Захват реального трафика показал, что это ошибка:
+`Notification(idle_prompt)` looks like "input required", but captured traffic shows
+it is an **inactivity timer**: it fires exactly 60 seconds after the agent finishes
+its turn.
 
 ```
-17:34:19.679  Stop                        → IDLE (зелёный)
-17:35:19.695  Notification idle_prompt    ровно +60.0 с
+17:34:19.679  Stop                        → IDLE (green)
+17:35:19.695  Notification idle_prompt    exactly +60.0 s
               message: "Claude is waiting for your input"
 ```
 
-`idle_prompt` — это **таймер бездействия**, который срабатывает через 60 секунд
-после того, как агент закончил ход. Он не означает, что агент чем-то заблокирован:
-он означает ровно то же, что и `Stop` — агент закончил и ждёт тебя.
+It means the same thing as `Stop`: the agent is done and waiting for you. Mapping
+it to `ATTN` would turn every idle agent red a minute after it answered, and red
+would stop meaning "nothing happens without you".
 
-Если вести его в `ATTN`, получится так: агент ответил → зелёный → через минуту
-красный. И все четыре светофора будут красными всё время, пока ты ими не
-занимаешься. Это инвертирует весь смысл индикации: красный должен означать
-«без тебя не поедет», а не «тут никого нет».
-
-**Правило: `ATTN` только когда агент реально заблокирован решением** —
+**Rule: `ATTN` only when the agent is actually blocked on a decision** —
 `PermissionRequest`, `Notification(permission_prompt)`,
 `Notification(agent_needs_input)`, `Elicitation`, `StopFailure`.
-`idle_prompt` не меняет состояние вообще.
+`idle_prompt` does not change the state at all.
 
-Самоисцеляющиеся последовательности (важно — проверять на них):
+Self-healing sequences the state machine is tested against:
 
 ```
-Pre(BUSY) → PermissionRequest(ATTN) → [юзер разрешил] → PostToolUse(BUSY) → Stop(IDLE)
-Pre(BUSY) → PermissionRequest(ATTN) → [юзер отклонил] → PermissionDenied(BUSY) → Stop(IDLE)
-Stop(IDLE) → Notification(idle_prompt, +60 с)(состояние НЕ меняется, остаётся IDLE)
+Pre(BUSY) → PermissionRequest(ATTN) → [user allows] → PostToolUse(BUSY) → Stop(IDLE)
+Pre(BUSY) → PermissionRequest(ATTN) → [user denies] → PermissionDenied(BUSY) → Stop(IDLE)
+Stop(IDLE) → Notification(idle_prompt, +60 s) (state does NOT change, stays IDLE)
 ```
 
-### Почему субагенты не красят в жёлтый (баг 2026-10-16)
+### Why subagents do not turn the light yellow
 
-Claude Code сам запускает форк-агентов, пока ты ничего не делаешь: `away_summary`
-(сводка «пока тебя не было» через ~3 мин простоя), `prompt_suggestion`,
-`agent_summary`, а ещё сжимает контекст в простое (`idleCompaction`). Когда
-`SubagentStart`/`SubagentStop` вели в `BUSY`, простаивающий агент через 3 минуты
-после `Stop` становился жёлтым и висел так до `busy_timeout_sec`. Настоящий субагент
-работает внутри хода, когда слот уже жёлтый от `UserPromptSubmit`/`PreToolUse`, так
-что эти события ничего не теряют. Для разбора подобного демон пишет все хуки (без
-промптов и содержимого инструментов) в `~/.agentlight/hooks.jsonl`.
+Claude Code launches forked agents on its own while you are away: `away_summary`
+(after ~3 minutes of inactivity), `prompt_suggestion`, `agent_summary`, and it may
+compact the context while idle. If `SubagentStart`/`SubagentStop` mapped to `BUSY`,
+an idle agent would turn yellow a few minutes after `Stop` and stay that way until
+`busy_timeout_sec`. A real subagent runs inside a turn, when the slot is already
+yellow from `UserPromptSubmit`/`PreToolUse`, so nothing is lost by ignoring them.
 
-### Важный нюанс: `/clear` и `--resume`
+To debug cases like this, the daemon logs every hook (without prompts or tool
+contents) to `~/.agentlight/hooks.jsonl`.
 
-`/clear` даёт `SessionEnd(end_reason="clear")`, затем `SessionStart(source="clear")`
-с **новым** `session_id`. Если на `SessionEnd` слот освобождать сразу, светофор
-мигнёт в OFF и агент может переехать в другой слот.
+### `/clear` and `--resume`
 
-**Решение:** на `SessionEnd` с `end_reason ∈ {clear, resume}` слот не освобождается,
-а помечается `rebinding` на 15 секунд с ключом `(cwd, claude_pid)`. Следующий
-`SessionStart` с тем же ключом занимает тот же слот и **не** проигрывает welcome.
+`/clear` produces `SessionEnd(end_reason="clear")` followed by
+`SessionStart(source="clear")` with a **new** `session_id`. Releasing the slot on
+`SessionEnd` right away would make the light blink off and possibly move the agent
+to another slot.
 
-## 1.4. Аллокация слотов
+So on `SessionEnd` with `end_reason ∈ {clear, resume}` the slot is not released
+but marked `rebinding` for 15 seconds, keyed by `(cwd, claude_pid)`. The next
+`SessionStart` with the same key takes the same slot and does **not** play the
+welcome animation.
+
+## 1.4. Slot allocation
 
 ```
 claim(session_id, cwd, pid):
-  1. если session_id уже в слоте → вернуть его
-  1a. если процесс claude фоновый, без своего окна → в скрытый список background
-  2. если есть слот в состоянии rebinding с ключом (cwd, pid) → занять его, без welcome
-  3. если в конфиге есть pin для cwd (или родительского пути) и слот свободен → занять его
-  4. иначе — минимальный свободный индекс 0..slot_count-1
-  5. если свободных нет → в overflow-очередь (светофора не будет)
+  1. if session_id already has a slot → return it
+  1a. if the claude process has no window (spare, or daemon-hosted with no live owner tab) → hidden "background" list
+  2. if a slot is in `rebinding` with key (cwd, pid) → take it, no welcome
+  3. if the config pins cwd (or a parent path) to a slot and that slot is free → take it
+  4. otherwise → the lowest free index 0..slot_count-1
+  5. if nothing is free → overflow queue (no light)
 ```
 
-* Фоновые сессии хостит демон Claude Code (`claude --bg`, форк в фон): у `claude`
-  родитель `bg-pty-host`, окна в терминале нет, фокусировать нечего. Демон ещё и заранее
-  поднимает запасной процесс `--bg-spare`, который отрабатывает `SessionStart` без
-  пользователя. Таким светофор не положен: события поглощаются в список `background`
-  (виден в `agentlight status`), запись уходит по `SessionEnd` или смерти процесса.
-  Проверка по PID идёт и в sweep раз в 5 с — так из слотов уходят сессии из state.json
-  прошлой версии.
-* `release(slot)` — по `SessionEnd`, по проверке живости (`kill(pid, 0)` раз в 5 с),
-  или по TTL (нет событий 8 часов) — TTL только для сессий без известного PID,
-  и время сна мака в него не засчитывается.
-* Esc (прерывание хода, отказ от вопроса или запроса разрешения) хуков не шлёт —
-  демон ловит строку `[Request interrupted by user…]` в transcript сессии → `IDLE`.
-* Когда слот освобождается, занятые слоты справа от него сдвигаются влево — дырок
-  между светофорами не остаётся (сдвинутые не проигрывают welcome, mute и rebinding
-  едут вместе со слотом). В первый свободный слот из overflow-очереди заезжает сессия
-  с самым свежим событием (и получает welcome). Пин и кнопка пустого слота влияют
-  только на то, куда сессия встанет при старте.
-* Маппинг персистится в `~/.agentlight/state.json` (atomic write через temp + rename),
-  чтобы перезапуск демона не ломал привязки.
+* **Daemon-hosted sessions** (`claude --bg`, a session forked to the background) run
+  under Claude Code's own daemon: their parent is `bg-pty-host`, and their pty is
+  not a terminal window. The user watches them from the tab that started the daemon
+  (`claude daemon run --spawned-by {"pid":N}`). While that claude process N is alive,
+  the session gets its own light, and the hook reports N's terminal (tty and env),
+  so the focus button switches to that tab. A session with no live owner tab, and
+  the spare `--bg-spare` process Claude Code pre-spawns (it runs `SessionStart`
+  without a user), get no light: their events go to the hidden `background` list
+  (shown by `agentlight status`), and the entry is dropped on `SessionEnd` or when
+  the process dies. The check also runs in the 5-second sweep, which moves sessions
+  between slots and `background` both ways.
+* `release(slot)` happens on `SessionEnd`, on a liveness check (`kill(pid, 0)`
+  every 5 s), or on a TTL (no events for 8 hours). The TTL only applies to sessions
+  without a known PID, and time the Mac spends asleep does not count.
+* **Esc** (interrupting a turn, dismissing a question or a permission prompt) sends
+  no hook. The daemon tails the session transcript and treats the
+  `[Request interrupted by user…]` line as → `IDLE`.
+* When a slot is released, the occupied slots to its right shift left, so there are
+  no gaps between lights (shifted slots do not replay the welcome animation; mute
+  and `rebinding` move with the slot). The overflow session with the most recent
+  event moves into the first free slot (and does get a welcome). Pins and the
+  empty-slot button only affect where a session lands when it starts.
+* The mapping is persisted in `~/.agentlight/state.json` (atomic write via a temp
+  file + rename), so restarting the daemon keeps the assignments.
 
-### Конфиг пинов
+### Configuration
 
 `~/.agentlight/config.json`:
 
@@ -165,59 +172,57 @@ claim(session_id, cwd, pid):
   "busy_timeout_sec": 900,
   "idle_pulse": false,
   "empty_slot_button_launches": "~/projects",
-  "terminal_focus_order": ["tmux", "native", "ax", "new_window"]
+  "terminal_focus_order": ["tmux", "native", "new_window"]
 }
 ```
 
-`slot_count` — сколько светофоров в приложении (1–16, по умолчанию 4; меняется и в
-«Настройках…»). Одно устройство показывает 4 из них: первое подключённое — слоты 0..3,
-второе — 4..7 и т. д. ([§5.8](05-host-macos.md#58-транспорт-usb)). Слоты без устройства
-видны только в строке меню. При уменьшении `slot_count` сессии из лишних слотов уходят
-в overflow, при увеличении — новые слоты заполняются из overflow.
+`slot_count` is the number of lights in the app (1–16, default 4; also editable in
+**Settings…**). One device shows 4 of them: the first connected device shows slots
+0..3, the second 4..7, and so on ([§5.8](05-host-macos.md#58-usb-transport)). Slots
+without a device are only visible in the menu bar. Lowering `slot_count` moves
+sessions from the removed slots to overflow; raising it fills the new slots from
+overflow.
 
-## 1.5. Watchdog на двух уровнях
+## 1.5. Two-level watchdog
 
-| Уровень | Условие | Действие |
+| Level | Condition | Action |
 |---|---|---|
-| хост → слот | в `BUSY` нет событий `busy_timeout_sec` (900 с) | деградировать в `IDLE` |
-| хост → слот | `kill(pid, 0)` не проходит | `release` → `OFF` |
-| железка → все слоты | нет `PING` от хоста > 3 с | погасить все светофоры |
+| host → slot | no events in `BUSY` for `busy_timeout_sec` (900 s) | degrade to `IDLE` |
+| host → slot | `kill(pid, 0)` fails | `release` → `OFF` |
+| device → all slots | no `PING` from the host for > 3 s | turn every light off |
 
-Третий пункт — ключевой для честности индикации: если демон упал или мак ушёл в
-сон, светофоры гаснут сами, а не врут зелёным.
+The last one keeps the lights honest: if the daemon crashes or the Mac goes to
+sleep, the lights go dark on their own instead of showing a stale green.
 
-## 1.6. Кнопки
+## 1.6. Buttons
 
-| Нажатие | Слот занят | Слот пуст |
+| Press | Slot occupied | Slot empty |
 |---|---|---|
-| короткое | сфокусировать окно терминала агента | запустить новый `claude` в каталоге из `empty_slot_button_launches` |
+| short | focus the agent's terminal window | start a new `claude` in the directory from `empty_slot_button_launches` |
 
-**Жесты (долгое, двойное) убраны 2026-10-23**: у кнопки одно действие, реакция мгновенная,
-без ожидания «а вдруг будет второе нажатие». Mute слота остался только командой
-`agentlight mute <slot>`. Дебаунс — в прошивке, хост получает готовое `!BTN <slot> press`.
+A button has exactly one action and reacts immediately — there are no long-press or
+double-press gestures, so no press is delayed waiting for a second one. Muting a
+slot is available as `agentlight mute <slot>`. Debouncing happens in the firmware;
+the host receives a ready `!BTN <slot> press`.
 
-## 1.7. Структура репозитория (целевая)
+## 1.7. Repository layout
 
 ```
-agent-indicator/
-├── firmware/              # Pico SDK, C
-│   ├── CMakeLists.txt
-│   ├── src/main.c         # главный цикл 60 Гц
-│   ├── src/leds.c         # 12 каналов PWM, гамма, PWM 14 бит, калибровка
-│   ├── src/anim.c         # кроссфейды, welcome, пульс
-│   ├── src/buttons.c      # дебаунс, жесты
-│   ├── src/proto.c        # разбор команд, события
-│   └── src/usb_descriptors.c
-├── host/                  # Swift Package
-│   ├── Package.swift
-│   └── Sources/
-│       ├── agentlightd/   # демон
-│       ├── AgentLightKit/ # слоты, стейт-машина, транспорт
-│       └── agentlight/    # CLI: install-hooks, status, test
-├── hardware/              # KiCad (фаза 7)
-├── enclosure/             # OpenSCAD / STEP + STL
+agentlight/
+├── firmware/              # RP2040 firmware, Pico SDK + TinyUSB, C
+│   └── src/               # leds, anim, buttons, power, proto, transport_hid, usb_descriptors, …
+├── host/                  # macOS app: Swift package
+│   ├── Sources/
+│   │   ├── AgentLightKit/ # slots, state machine, transports, hooks — no UI, unit-tested
+│   │   ├── agentlightd/   # the daemon + menu bar UI
+│   │   └── agentlight/    # CLI: install-hooks, status, doctor, …
+│   ├── Tests/
+│   └── scripts/           # build-app.sh (AgentLight.app), icon generator
+├── hardware/pcb/          # KiCad board, generated by Python scripts; JLCPCB fab outputs
+├── packaging/homebrew/    # Homebrew cask template
 ├── tools/
-│   ├── proto_test.py      # стресс-тест протокола прошивки (M2)
-│   └── replay.jsonl       # записанные хук-события для тестов
+│   ├── proto_test.py      # firmware protocol test over CDC
+│   ├── flash.sh           # build + flash without pressing BOOT
+│   └── hook-capture/      # HTTP hook capture server + recorded samples (test fixture)
 └── docs/
 ```

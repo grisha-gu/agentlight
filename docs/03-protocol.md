@@ -1,99 +1,102 @@
-# 03. USB-протокол
+# 03. USB protocol
 
-## 3.1. Устройство как composite USB
+## 3.1. A composite USB device
 
-Одно устройство, два интерфейса:
+One device, two interfaces:
 
-| Интерфейс | Назначение |
+| Interface | Purpose |
 |---|---|
-| **Vendor HID** (usage page `0xFF00`, usage `0x01`), репорты 64 байта IN/OUT | рабочий канал: команды и события |
-| **CDC-ACM** (`/dev/cu.usbmodem*`) | логи прошивки + тот же набор команд в ASCII для отладки |
+| **Vendor HID** (usage page `0xFF00`, usage `0x01`), 64-byte IN/OUT reports | main channel: commands and events |
+| **CDC-ACM** (`/dev/cu.usbmodem*`) | firmware logs + the same command set in ASCII, for debugging |
 
-Почему HID основной, а не CDC:
+Why HID is the main channel rather than CDC:
 
-* нет `/dev/cu.*`, который может занять `screen`, Arduino IDE или другой процесс;
-* не нужен драйвер и, для vendor-defined usage page, не нужны разрешения TCC
-  (в отличие от HID-клавиатур, которым нужен Input Monitoring) — **проверить это
-  первым делом на M2**, это единственная неподтверждённая предпосылка протокола;
-* компактные фиксированные пакеты, нет парсинга потока и склеенных строк;
-* чистый hot-plug: `IOHIDManager` сам сообщает matched/removed.
+* there is no `/dev/cu.*` node that `screen`, an IDE or another process can grab;
+* no driver and, for a vendor-defined usage page, no macOS privacy permission
+  (unlike HID keyboards, which require Input Monitoring);
+* fixed-size packets — no stream parsing, no merged lines;
+* clean hot-plug: `IOHIDManager` reports matched/removed devices itself.
 
-CDC оставляем, потому что отлаживать `screen /dev/cu.usbmodem101 115200` и печатать
-туда команды руками — быстрее любого инструмента.
+CDC is kept because typing commands into `screen /dev/cu.usbmodem101 115200` is the
+fastest debugging tool there is.
 
-### Идентификация
+### Identification
 
-* VID/PID: взять свободный PID на `pid.codes` под VID `1209` (например `1209:AC01`).
-  На время разработки можно жить на дефолтном `2E8A:000A` от Pico SDK.
-* Product string: `AgentLight`
-* Serial: 64-битный уникальный ID флеша RP2040 (`pico_get_unique_board_id`) в hex.
-  Нужен, чтобы хост различал два устройства (8 светофоров — фаза 7).
+| Field | Value |
+|---|---|
+| VID:PID | currently `2E8A:000A` (the Raspberry Pi Pico SDK default), to be replaced by a dedicated PID under the [pid.codes](https://pid.codes) VID `1209` |
+| Manufacturer / product string | `AgentLight` |
+| Serial number | the RP2040 flash unique ID (`pico_get_unique_board_id`), hex |
+| `bcdDevice` | `0x0100` |
 
-## 3.2. Перечисления
+The host matches devices by VID (`1209` or `2E8A`) together with the vendor usage
+page `0xFF00`, so both IDs work. The serial number lets the host tell several devices apart.
+
+## 3.2. Enumerations
 
 ```c
-typedef enum {            // состояние слота
+typedef enum {            // slot state
   ST_OFF   = 0,
-  ST_IDLE  = 1,           // зелёный
-  ST_BUSY  = 2,           // жёлтый
-  ST_ATTN  = 3,           // красный
+  ST_IDLE  = 1,           // green
+  ST_BUSY  = 2,           // yellow
+  ST_ATTN  = 3,           // red
 } slot_state_t;
 
-typedef enum {            // жесты кнопок
-  BTN_PRESS  = 1,         // нажатие: событие сразу после дебаунса
-  BTN_LONG   = 2,         // зарезервировано — жесты убраны 2026-10-23, прошивка не шлёт
-  BTN_DOUBLE = 3,         // зарезервировано
+typedef enum {            // button gestures
+  BTN_PRESS  = 1,         // press: sent right after debouncing
+  BTN_LONG   = 2,         // reserved, not sent by the firmware
+  BTN_DOUBLE = 3,         // reserved
 } btn_gesture_t;
 ```
 
-## 3.3. Бинарный протокол (HID, 64-байтные репорты)
+## 3.3. Binary protocol (HID, 64-byte reports)
 
-Все репорты фиксированной длины 64 байта, неиспользуемые байты — нули.
-Порядок байт — little-endian.
+All reports are exactly 64 bytes; unused bytes are zero. Multi-byte values are
+little-endian.
 
-### Хост → устройство (OUT report)
+### Host → device (OUT report)
 
-| байт 0 (opcode) | Имя | Payload |
+| Byte 0 (opcode) | Name | Payload |
 |---|---|---|
 | `0x01` | `SET_STATE` | `[1]=slot (0..3)`, `[2]=state` |
-| `0x02` | `SET_ALL` | `[1..4]=state` для слотов 0..3 — один кадр, без рассинхрона |
-| `0x03` | `WELCOME` | `[1]=slot` (`0xFF` = волна по всем слотам) |
+| `0x02` | `SET_ALL` | `[1..4]=state` for slots 0..3 — one frame, no tearing |
+| `0x03` | `WELCOME` | `[1]=slot` (`0xFF` = a wave across all slots) |
 | `0x04` | `BRIGHTNESS` | `[1]=0..255` |
-| `0x05` | `PING` | `[1..4]=seq (u32)` — heartbeat, раз в 1000 мс |
-| `0x06` | `HELLO` | — запрос идентификации |
-| `0x07` | `SELFTEST` | — прогнать полную анимацию проверки |
-| `0x08` | `CONFIG` | `[1]=flags`: bit1 `busy_pulse`, bit2 `idle_pulse`; bit0 не используется (был `attn_blink`, удалён) |
-| `0x09` | `RAW` | `[1..12]` = уровень 0..255 для каждого из 12 светодиодов — прямая запись (отладка/калибровка) |
+| `0x05` | `PING` | `[1..4]=seq (u32)` — heartbeat, every 1000 ms |
+| `0x06` | `HELLO` | — identification request |
+| `0x07` | `SELFTEST` | — run the full test animation |
+| `0x08` | `CONFIG` | `[1]=flags`: bit1 `busy_pulse`, bit2 `idle_pulse`; bit0 reserved |
+| `0x09` | `RAW` | `[1..12]` = level 0..255 for each of the 12 LEDs — direct output (debugging / calibration) |
 
-### Устройство → хост (IN report)
+### Device → host (IN report)
 
-| байт 0 (opcode) | Имя | Payload |
+| Byte 0 (opcode) | Name | Payload |
 |---|---|---|
-| `0x81` | `READY` | `[1]=proto_ver`, `[2]=slots`, `[3..5]=fw major/minor/patch`, `[6..13]=uid`, `[14]=power (1 вкл / 0 выкл)` |
+| `0x81` | `READY` | `[1]=proto_ver`, `[2]=slots`, `[3..5]=fw major/minor/patch`, `[6..13]=uid`, `[14]=power (1 on / 0 off)` |
 | `0x82` | `BUTTON` | `[1]=slot`, `[2]=gesture`, `[3..6]=timestamp_ms (u32)` |
 | `0x83` | `PONG` | `[1..4]=seq`, `[5..8]=uptime_ms`, `[9]=watchdog_tripped (0/1)` |
 | `0x84` | `LOG` | `[1]=len`, `[2..]` = ASCII |
-| `0x85` | `POWER` | `[1]=1` вкл / `0` выкл — выключатель на задней стенке ([02-hardware.md §2.12](02-hardware.md#212-выключатель-на-задней-стенке-решено-2026-10-26)) |
+| `0x85` | `POWER` | `[1]=1` on / `0` off — the rear power switch ([02-hardware.md §2.5](02-hardware.md#25-power-switch)) |
 
-`READY` отправляется один раз после USB-энумерации — хост по нему понимает, что
-железка перезагрузилась, и отправляет `SET_ALL` + `BRIGHTNESS` + `CONFIG` заново.
+`READY` is sent once after USB enumeration. It tells the host that the device has
+rebooted, and the host re-sends `SET_ALL` + `BRIGHTNESS` + `CONFIG`.
 
-## 3.4. ASCII-протокол (CDC, тот же набор команд)
+## 3.4. ASCII protocol (CDC, same command set)
 
-Строки `\n`-терминированные, регистронезависимые команды. Ответы устройства на
-команду начинаются с `OK`/`ERR`, асинхронные события — с `!`.
+Lines are `\n`-terminated; commands are case-insensitive. Replies to a command start
+with `OK` or `ERR`; asynchronous events start with `!`.
 
 ```
 → HELLO
-← OK agentlight proto=1 fw=1.0.0 slots=4 uid=E66038B7132F4C23 power=on
+← OK agentlight proto=1 fw=0.6.0 slots=4 uid=E66038B7132F4C23 power=on
 
-→ SET 2 busy                  # slot state(off|idle|busy|attn)
+→ SET 2 busy                  # slot state (off|idle|busy|attn)
 ← OK
 
 → SETALL idle busy attn off
 ← OK
 
-→ WELCOME 0                   # WELCOME ALL — волна по всем
+→ WELCOME 0                   # WELCOME ALL — a wave across all slots
 ← OK
 
 → BRIGHT 120
@@ -108,62 +111,65 @@ typedef enum {            // жесты кнопок
 → CONFIG busy_pulse=1 idle_pulse=0
 ← OK
 
-→ RAW ff 00 00 00 ff 00 00 00 ff 80 80 80   # 12 уровней 0..255 (hex), порядок = GP0..GP11
+→ RAW ff 00 00 00 ff 00 00 00 ff 80 80 80   # 12 levels 0..255 (hex), order = GP0..GP11
 ← OK
 
 → SET 9 busy
 ← ERR bad slot
 ```
 
-Асинхронно, в любой момент:
+Asynchronous, at any time:
 
 ```
-← !READY proto=1 fw=1.0.0 slots=4 uid=E66038B7132F4C23 power=on
-← !POWER off                  # переключатель на задней стенке: огни погашены, кнопки молчат
+← !READY proto=1 fw=0.6.0 slots=4 uid=E66038B7132F4C23 power=on
+← !POWER off                  # rear switch: lights off, buttons muted
 ← !BTN 2 press t=135022
-← !WD trip                    # сработал watchdog, всё погашено
+← !WD trip                    # the heartbeat watchdog fired, everything is off
 ← !LOG leds: frame overrun 3
 ```
 
-Один парсер команд, два транспорта: и HID, и CDC складывают разобранную команду
-в одну и ту же структуру `cmd_t` и кладут в общую очередь.
+One command parser, two transports: both HID and CDC decode into the same `cmd_t`
+structure and push it into a shared queue.
 
-## 3.5. Инварианты и правила
+## 3.5. Invariants
 
-1. **Устройство не имеет логики привязки сессий.** Оно знает только 4 слота и 4
-   состояния. Вся логика «кто в каком слоте» — на хосте. Это позволяет тестировать
-   железку руками через `screen` и переписывать хост не трогая прошивку.
-   Протокол не знает и о типе светодиодов: при переходе на адресуемые меняется
-   только `leds.c`, а `RAW` расширяется с 12 уровней до 12 триплетов.
-2. **Heartbeat обязателен.** Нет `PING` дольше 3000 мс → устройство гасит всё и
-   отправляет `!WD trip`. Хост, увидев `!WD trip` или переподключение, заливает
-   полное состояние заново (`SET_ALL` + `BRIGHTNESS` + `CONFIG`).
-3. **Идемпотентность.** `SET_STATE` с тем же состоянием не перезапускает анимацию
-   и не перезапускает пульс. Хост может спамить состояние без последствий.
-4. **`SET_ALL` предпочтительнее 4 × `SET_STATE`** — исключает мерцание
-   промежуточных комбинаций.
-5. **Кнопки не зависят от хоста.** Дебаунс — в прошивке; если хост мёртв,
-   нажатия просто теряются (светофоры и так погашены watchdog'ом).
-6. **Выключатель — в прошивке.** При `power=off` устройство само гасит огни и
-   глушит кнопки; команды состояния принимает и применяет при включении. Хост только
-   показывает «выключено». Поле `power` и событие `POWER` добавлены без смены `proto_ver`:
-   старый хост их игнорирует.
-7. **Версионирование.** `proto_ver` в `READY`. Хост отказывается работать с
-   `proto_ver` больше, чем знает, и пишет внятную ошибку в лог.
+1. **The device knows nothing about sessions.** It only knows 4 slots and 4 states.
+   All "who is in which slot" logic lives on the host. The device can be driven by
+   hand through `screen`, and the host can be rewritten without touching the
+   firmware. The protocol does not know the LED type either: switching to
+   addressable LEDs would only change `leds.c` and widen `RAW` to 12 RGB triplets.
+2. **The heartbeat is mandatory.** No `PING` for more than 3000 ms → the device turns
+   everything off and sends `!WD trip`. On `!WD trip` or a reconnect the host
+   re-sends the full state (`SET_ALL` + `BRIGHTNESS` + `CONFIG`).
+3. **Idempotence.** `SET_STATE` with the current state restarts neither the
+   animation nor the pulse. The host may resend state freely.
+4. **Prefer `SET_ALL` over 4 × `SET_STATE`** — it avoids flashing intermediate
+   combinations.
+5. **Buttons do not depend on the host.** Debouncing is in the firmware; if the host
+   is gone, presses are simply lost (and the lights are already off via the
+   watchdog).
+6. **The power switch is handled in the firmware.** With `power=off` the device
+   turns the lights off and mutes the buttons by itself; it keeps accepting state
+   commands and applies them when switched back on. The host only displays "off".
+   The `power` field and the `POWER` event were added without bumping `proto_ver`:
+   older hosts ignore them.
+7. **Versioning.** `proto_ver` is reported in `READY`. The host refuses to talk to a
+   `proto_ver` newer than it knows and logs a clear error.
 
-## 3.6. Как тестировать протокол без хоста
+## 3.6. Testing the protocol without the host
 
 ```bash
-# подключиться к CDC
+# connect to CDC
 screen /dev/cu.usbmodem101 115200
-# внутри: HELLO, SET 0 busy, WELCOME ALL, SELFTEST, BRIGHT 40
+# then type: HELLO, SET 0 busy, WELCOME ALL, SELFTEST, BRIGHT 40
 
-# или одной строкой
+# or one line at a time
 printf 'SETALL idle busy attn off\n' > /dev/cu.usbmodem101
 
-# стресс: 200 переключений в секунду — не должно быть артефактов
-python3 tools/proto_test.py --port /dev/cu.usbmodem101 --stress
+# full test suite (stop the daemon first so it releases the port)
+python3 tools/proto_test.py --stop-daemon
 ```
 
-`tools/proto_test.py` (M2) обязан покрывать: все команды, невалидные аргументы,
-обрыв heartbeat → `!WD trip`, переподключение, стресс переключений, все 4 кнопки.
+`tools/proto_test.py` covers every command, invalid arguments, heartbeat loss →
+`!WD trip`, reconnects, a 200 switches/s stress test and all 4 buttons; see
+[04-firmware.md §4.9](04-firmware.md#49-test-checklist).

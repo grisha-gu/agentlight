@@ -1,117 +1,111 @@
-# 05. Хост: демон для macOS
+# 05. Host: the macOS daemon
 
-## 5.1. Почему Swift и почему .app-бандл
+## 5.1. Why Swift and why an .app bundle
 
-Нужны три вещи, которые на macOS делаются проще всего нативно:
+Three things are easiest to do natively on macOS:
 
-| Задача | API |
+| Task | API |
 |---|---|
-| USB HID без драйверов | `IOHIDManager` (IOKit) |
-| фокус окна терминала | `NSAppleScript` / ScriptingBridge + Accessibility API |
-| автозапуск, сон/просыпание | `launchd` + `NSWorkspace` notifications |
+| driverless USB HID | `IOHIDManager` (IOKit) |
+| focusing a terminal window | `NSAppleScript` |
+| autostart, sleep/wake | `launchd` + `NSWorkspace` notifications |
 
-Python/Node потянут за собой рантайм, проблемы с подписью и мучения с TCC.
-Rust сможет всё, но через FFI и `osascript`-шеллауты.
-
-**Важно: демон должен жить внутри .app-бандла**, даже если у него нет окон
-(`LSUIElement = true`). TCC (разрешения Automation и Accessibility) привязывается
-к bundle identifier — у «голого» бинарника идентичность это путь + cdhash, и
-каждая пересборка сбрасывает выданные разрешения. С бандлом разрешение выдаётся
-один раз и живёт.
+**The daemon lives inside an .app bundle**, even though it has no regular windows
+(`LSUIElement = true`). macOS privacy permissions (Automation) are tied to the bundle
+identifier and signature. A bare binary is identified by its path and cdhash, so every
+rebuild would reset the granted permissions.
 
 ```
 AgentLight.app/
 └── Contents/
     ├── Info.plist             # LSUIElement=1, CFBundleIdentifier=dev.grisha-gu.agentlight
-    ├── MacOS/
-    │   ├── agentlightd        # демон
-    │   └── agentlight         # CLI (symlink в /usr/local/bin)
-    └── Resources/
-        └── focus/*.scpt       # AppleScript-скрипты фокуса
+    └── MacOS/
+        ├── agentlightd        # daemon + menu bar UI
+        └── agentlight         # CLI (symlinked into /usr/local/bin)
 ```
 
-## 5.2. Пакет
+## 5.2. Package
 
 ```
 host/
 ├── Package.swift
-└── Sources/
-    ├── AgentLightKit/              # вся логика, покрыта тестами
-    │   ├── SlotAllocator.swift      # claim/release/rebind/overflow
-    │   ├── SlotStateMachine.swift   # событие → состояние
-    │   ├── HookEvent.swift          # декодинг JSON всех хуков
-    │   ├── SessionRecord.swift      # session_id, cwd, pid, terminal ref
-    │   ├── StateStore.swift         # ~/.agentlight/state.json, atomic
-    │   ├── Config.swift
-    │   ├── DeviceTransport.swift    # protocol
-    │   ├── HIDTransport.swift       # IOHIDManager
-    │   ├── CDCTransport.swift       # termios, для отладки
-    │   ├── FakeTransport.swift      # ANSI-рендер в терминал, без железа
-    │   └── TerminalFocus/           # стратегии фокуса
-    ├── agentlightd/                 # HTTP-сервер + склейка
-    │   └── MenuBar/                 # NSStatusItem + popover со светофорами
-    └── agentlight/                  # CLI
+├── Sources/
+│   ├── AgentLightKit/              # all logic, no UI, unit-tested
+│   │   ├── SlotAllocator.swift      # claim / release / rebind / overflow
+│   │   ├── SlotStateMachine.swift   # event → state
+│   │   ├── HookEvent.swift          # tolerant JSON decoding of all hooks
+│   │   ├── SessionRecord.swift      # session_id, cwd, pid, terminal reference
+│   │   ├── StateStore.swift         # ~/.agentlight/state.json, atomic writes
+│   │   ├── Config.swift
+│   │   ├── DeviceProtocol.swift     # HID/ASCII encoding, DeviceLink
+│   │   ├── DeviceTransport.swift    # transport protocol
+│   │   ├── HIDTransport.swift       # IOHIDManager
+│   │   ├── CDCTransport.swift       # termios, for debugging
+│   │   ├── FakeTransport.swift      # ANSI rendering in a terminal, no hardware
+│   │   ├── HTTPServer.swift         # minimal HTTP/1.1 on 127.0.0.1
+│   │   ├── HookInstaller.swift      # merges hooks into ~/.claude/settings.json
+│   │   ├── TerminalCapture.swift    # terminal identity on SessionStart
+│   │   ├── TerminalFocus.swift      # focus strategies
+│   │   └── TranscriptTail.swift     # detects Esc interrupts in the transcript
+│   ├── agentlightd/                 # daemon wiring + MenuBar/ (status item, popover, settings)
+│   └── agentlight/                  # CLI
+└── Tests/AgentLightKitTests/
 ```
 
-Тесты `AgentLightKitTests` — вся стейт-машина и аллокатор проверяются без железа
-и без Claude Code, на записанных последовательностях событий (`tools/replay.jsonl`).
+The tests cover the state machine and the allocator without hardware or Claude Code,
+using recorded hook traffic (`tools/hook-capture/samples.jsonl`).
 
-## 5.3. Приём хуков по HTTP
+## 5.3. Receiving hooks over HTTP
 
-Claude Code поддерживает хук типа `http` — он делает POST на твой URL с тем же
-JSON, что получает `command`-хук на stdin. Это сильно лучше `command` для
-высокочастотных событий: `PreToolUse`/`PostToolUse` срабатывают на каждый вызов
-инструмента, и форк процесса на каждый из них — 10–20 мс в горячем пути агента.
+Claude Code supports `http` hooks: it POSTs the same JSON a `command` hook receives
+on stdin. For high-frequency events this is much better than `command` hooks:
+`PreToolUse`/`PostToolUse` fire on every tool call, and forking a process for each
+costs 10–20 ms in the agent's hot path.
 
 ```swift
-// NWListener на 127.0.0.1, минимальный HTTP/1.1
-// Правило: ответить 204 МГНОВЕННО, обработку сделать после.
+// NWListener on 127.0.0.1, minimal HTTP/1.1
+// Rule: reply 204 IMMEDIATELY, process afterwards.
 func handle(_ body: Data) {
-    queue.async { self.router.dispatch(body) }   // не держим соединение
+    queue.async { self.router.dispatch(body) }
     respond(status: 204)
 }
 ```
 
-Жёсткие требования к серверу:
+Server requirements:
 
-* слушать **только** `127.0.0.1` (никогда `0.0.0.0`);
-* отвечать `204` за < 1 мс, вся работа — асинхронно;
-* никогда не возвращать 5xx — хук с ошибкой пишет шум в дебаг-лог агента;
-* `async: true` и `timeout: 2` на стороне хука, чтобы упавший демон вообще
-  никак не влиял на работу агента.
+* listen on `127.0.0.1` **only** (never `0.0.0.0`);
+* reply `204` in < 1 ms; all work is asynchronous;
+* never return 5xx — a failing hook adds noise to the agent's debug log;
+* the hooks use `async: true` and `timeout: 2`, so a dead daemon does not affect the
+  agent at all.
 
-### Проверено на практике (2026-10-05)
+### Observed behaviour
 
-Главный риск проекта закрыт экспериментом: поднят логирующий сервер на 48879,
-в `.claude/settings.json` прописаны `http`-хуки на восемь событий, снят реальный
-трафик. Результаты:
+Verified against real traffic with a logging server ([`tools/hook-capture/`](../tools/hook-capture/README.md)):
 
-| Вопрос | Ответ |
+| Question | Answer |
 |---|---|
-| `http`-хуки работают? | **да** |
-| Метод, заголовки | `POST`, `Content-Type: application/json`, `User-Agent: axios/1.15.2`, `Accept-Encoding: gzip, compress, deflate, br` |
-| Тело | **побайтово то же самое**, что `command`-хук получает на stdin (сверено программно: `http_body == stdin_json` → `True`) |
-| Как различать события | поле `hook_event_name` **в теле** → один URL `/hook` на все события, роутинг по полю |
-| `Connection` | **`keep-alive`** → сервер обязан держать persistent-соединения HTTP/1.1 |
-| Подхват изменений `settings.json` | **на лету**, перезапуск сессии не нужен |
-| Мёртвый эндпоинт ломает агента? | **нет.** При убитом сервере вызов инструмента прошёл без задержки и без ошибки (с `async: true`) |
+| Do `http` hooks work? | yes |
+| Method, headers | `POST`, `Content-Type: application/json`, `User-Agent: axios/…` |
+| Body | **byte-for-byte identical** to what a `command` hook gets on stdin |
+| Routing | `hook_event_name` **in the body** → one URL, `/hook`, for all events |
+| `Connection` | **`keep-alive`** → the server must support persistent HTTP/1.1 connections |
+| Changes to `settings.json` | picked up **live**, no session restart needed |
+| Does a dead endpoint break the agent? | no: with `async: true` tool calls go through without delay or errors |
 
-### Поля, которых нет в документации
+### Undocumented fields
 
-В реальном теле обнаружились поля, не описанные на
-`https://code.claude.com/docs/en/hooks`. Декодер должен их принимать:
+Real payloads contain fields not described in the hooks documentation, so the decoder
+must accept unknown fields:
 
-* **`scratchpad_dir`** — временный каталог сессии. Полезен сам по себе;
-* `prompt_id` — UUID текущего хода, есть и в `PreToolUse`/`PostToolUse`;
-* `permission_mode` — `"auto"`, `"default"`, `"plan"` и т.д.;
+* `scratchpad_dir` — the session's temporary directory;
+* `prompt_id` — UUID of the current turn, also present in `PreToolUse`/`PostToolUse`;
+* `permission_mode` — `"auto"`, `"default"`, `"plan"`, …;
 * `effort: {level: "high"}`;
-* у `Stop` — `stop_hook_active`, **`background_tasks`** (массив запущенных
-  фоновых задач с их статусом) и `session_crons`.
+* on `Stop`: `stop_hook_active`, `background_tasks` (running background tasks with
+  their status) and `session_crons`.
 
-`background_tasks` пригодится позже: агент со живой фоновой задачей технически
-не бездействует. Пока не используем, но поле стоит сохранять.
-
-Фактические наборы полей по событиям (снято живьём):
+Observed field sets per event:
 
 ```
 PreToolUse        cwd effort hook_event_name permission_mode prompt_id
@@ -127,55 +121,29 @@ Notification      cwd hook_event_name message notification_type prompt_id
                   scratchpad_dir session_id transcript_path
 ```
 
-Обрати внимание: у `Notification` и `UserPromptSubmit` **нет** поля `effort`,
-а у `Notification` нет и `permission_mode`. Ещё один довод за то, чтобы в
-декодере всё было опциональным.
+`Notification` and `UserPromptSubmit` have no `effort`, and `Notification` has no
+`permission_mode` either. `PostToolUse` carries `tool_response` (an object) and
+`duration_ms` rather than a `tool_output` string.
 
-### Расхождение с документацией: PostToolUse
+Hence, in `HookEvent` **every field except `hook_event_name` and `session_id` is
+optional and unknown fields are ignored**, so a format change in a new Claude Code
+version does not break the lights.
 
-Документация обещает `tool_output: "string"`. **В реальности приходит
-`tool_response` — объект**, плюс `duration_ms`:
+### Consequences
 
-```json
-{
-  "hook_event_name": "PostToolUse",
-  "tool_response": {
-    "stdout": "trigger-1: 17:32:13\ndone",
-    "stderr": "",
-    "interrupted": false,
-    "isImage": false,
-    "noOutputExpected": false
-  },
-  "duration_ms": 352
-}
-```
+1. One endpoint, `POST /hook`, routed by `hook_event_name` from the body.
+2. The server supports keep-alive (several requests per TCP connection) and replies
+   `204` with `Content-Length: 0`.
+3. `agentlight install-hooks` takes effect immediately, without restarting agents.
+4. `command` and `http` hooks can be mixed freely on the same event.
+5. `Notification(idle_prompt)` arrives exactly 60 s after `Stop` and only means
+   inactivity — see [01-architecture.md](01-architecture.md#why-idle_prompt-does-not-mean-attn).
 
-Для нашей задачи содержимое не нужно — `PostToolUse` используется только как
-keepalive для `BUSY`. Но `HookEvent` в Swift надо декодировать так, чтобы
-**неизвестные и отсутствующие поля не ломали разбор**: все поля кроме
-`hook_event_name` и `session_id` — опциональные, лишние игнорируются.
-Иначе смена формата в новой версии Claude Code положит индикацию.
+## 5.4. Installing the hooks
 
-### Следствия для реализации
-
-1. Один эндпоинт `POST /hook`, роутинг по `hook_event_name` из тела.
-2. Сервер на `NWListener` **обязан** поддерживать keep-alive: несколько запросов
-   в одном TCP-соединении. Отвечать `204` с `Content-Length: 0`.
-3. `agentlight install-hooks` применяется сразу, без перезапуска агентов —
-   значит установка проходит в один шаг без «перезапусти все сессии».
-4. Хуки и `command`, и `http` можно свободно смешивать на одном событии
-   (проверено: на `PreToolUse` одновременно висели оба).
-5. **`Notification(idle_prompt)` приходит ровно через 60 с после `Stop`** и
-   означает лишь бездействие, а не блокировку. В `ATTN` его вести нельзя —
-   разбор в [01-architecture.md](01-architecture.md#почему-idle_prompt-нельзя-вести-в-attn-проверено-2026-10-05).
-
-Сырые данные эксперимента: `tools/hook-capture/` — сервер и снятые образцы.
-
-## 5.4. Установка хуков
-
-`agentlight install-hooks` дописывает в `~/.claude/settings.json`, **сохраняя
-существующие хуки** (merge по событию, а не перезапись), и прописывает абсолютные
-пути. `agentlight uninstall-hooks` убирает ровно свои записи по маркеру.
+`agentlight install-hooks` merges into `~/.claude/settings.json`, **keeping existing
+hooks** (merge per event, not overwrite), and writes a backup next to it.
+`agentlight uninstall-hooks` removes exactly its own entries.
 
 ```json
 {
@@ -188,9 +156,7 @@ keepalive для `BUSY`. Но `HookEvent` в Swift надо декодирова
         "timeout": 5
       } ] }
     ],
-    "UserPromptSubmit": [
-      { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] }
-    ],
+    "UserPromptSubmit":   [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ],
     "PreToolUse":         [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ],
     "PostToolUse":        [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ],
     "PostToolUseFailure": [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ],
@@ -203,49 +169,63 @@ keepalive для `BUSY`. Но `HookEvent` в Swift надо декодирова
     "Stop":               [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ],
     "StopFailure":        [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ],
     "SessionEnd":         [ { "hooks": [ { "type": "http", "url": "http://127.0.0.1:48879/hook", "async": true, "timeout": 2 } ] } ]
-    }
+  }
 }
 ```
 
-`SessionStart` — единственный `command`-хук, потому что ему нужно окружение
-терминала, которого в HTTP-payload нет.
+`SessionStart` is the only `command` hook, because it needs the terminal's
+environment, which the HTTP payload does not include.
 
-## 5.5. Захват идентичности терминала (ключевой трюк для кнопки)
+## 5.5. Capturing the terminal identity
 
-`command`-хук запускается как дочерний процесс Claude Code и наследует его
-окружение и контролирующий терминал. Отсюда можно достать всё нужное:
+A `command` hook runs as a child of Claude Code and inherits its environment and
+controlling terminal. That is enough to find the terminal tab later:
 
 ```swift
-// agentlight hook — на SessionStart
+// agentlight hook — on SessionStart
 struct TerminalRef: Codable {
-    var termProgram: String?    // ProcessInfo: TERM_PROGRAM  ("iTerm.app", "Apple_Terminal", "ghostty", "WezTerm", "vscode")
-    var itermSessionId: String? // ITERM_SESSION_ID → "w0t0p0:UUID"
-    var tmuxPane: String?       // TMUX_PANE  ("%3") + TMUX (socket)
+    var termProgram: String?    // TERM_PROGRAM ("Apple_Terminal", "iTerm.app", "ghostty", "WezTerm", "vscode")
+    var appBundleId: String?    // __CFBundleIdentifier — the terminal application
+    var itermSessionId: String? // ITERM_SESSION_ID
+    var tmuxPane: String?       // TMUX_PANE ("%3")
+    var tmuxSocket: String?     // from TMUX
     var weztermPane: String?    // WEZTERM_PANE
     var kittyWindowId: String?  // KITTY_WINDOW_ID
     var tty: String?            // ttyname(open("/dev/tty")) → "/dev/ttys004"
-    var claudePid: Int32?       // getppid(), затем вверх по дереву до процесса "claude"
-    var windowTitleHint: String // basename(cwd)
 }
+// plus the claude process PID: getppid(), then up the process tree
 ```
 
-* `tty`: `let fd = open("/dev/tty", O_RDONLY); String(cString: ttyname(fd))`.
-  Это контролирующий терминал — именно по нему и Terminal.app, и iTerm2 умеют
-  искать таб в AppleScript. Самый надёжный идентификатор.
-* `claudePid`: `getppid()`, потом вверх через `proc_pidpath`/`sysctl(KERN_PROC_PID)`
-  пока имя процесса не `claude`/`node`. Нужен и для фокуса, и для проверки живости.
+* `tty` is the controlling terminal; Terminal.app's AppleScript can look up a tab by
+  it. It is the most reliable identifier.
+* `claudePid` walks up from `getppid()` until it reaches the `claude` process. It is
+  used for focusing and for liveness checks. The native Claude Code build lives in
+  `~/.local/share/claude/versions/<version>`, so its process name (`p_comm`) is the
+  version number, not `claude`; the walk matches on `argv[0]` or the path instead.
+* `cwd` in hooks is the agent shell's *current* directory and changes after `cd`.
+  The session's project is the `cwd` of its first event and is not overwritten.
 
-Этот `TerminalRef` сохраняется в `SessionRecord` вместе с `session_id` и `cwd`.
+The reference is stored in the `SessionRecord` together with `session_id` and `cwd`.
 
-## 5.6. Фокус окна по нажатию кнопки
+## 5.6. Focusing the window on a button press
 
-Цепочка стратегий, первая сработавшая выигрывает. Порядок настраивается в
-`config.terminal_focus_order`.
+A chain of strategies; the first one that succeeds wins. The order is set by
+`terminal_focus_order` in the config (default `["tmux", "native", "new_window"]`).
 
-### 1. Terminal.app — основная стратегия (твой случай)
+### 1. `tmux` (if `TMUX_PANE` is set)
 
-Terminal.app полностью скриптуется и умеет искать таб по tty. Это делает кнопку
-точной: фокусируется именно нужный таб, а не просто окно.
+Switch the tmux window and pane, then focus the client's Terminal.app tab with
+strategy 2:
+
+```bash
+tmux select-window -t "$TMUX_PANE"
+tmux select-pane  -t "$TMUX_PANE"
+```
+
+### 2. `native` — Terminal.app
+
+Terminal.app is fully scriptable and can find a tab by tty, so the button focuses the
+exact tab, not just the window:
 
 ```applescript
 on run argv
@@ -254,7 +234,7 @@ on run argv
     repeat with w in windows
       repeat with t in tabs of w
         if tty of t is theTTY then
-          set miniaturized of w to false   -- свёрнутое в Dock окно иначе не всплывёт
+          if miniaturized of w then set miniaturized of w to false
           set selected tab of w to t
           set index of w to 1
           activate
@@ -267,143 +247,127 @@ on run argv
 end run
 ```
 
-Вызов: `NSAppleScript` с `Resources/focus/terminal_app.scpt`, аргумент — `tty`
-из `TerminalRef`. `set index of w to 1` поднимает окно внутри приложения,
-`activate` выводит вперёд само приложение — нужны оба.
+`set index of w to 1` raises the window within the app, `activate` brings the app to
+the front — both are needed.
 
-**Нативные вкладки (проверено 2026-10-16).** В современной macOS вкладки Terminal —
-системные, и AppleScript отдаёт **каждую вкладку отдельным `window` с одной `tab`**
-(2 физических окна → 5 `windows` с одинаковыми `bounds`). Поэтому скрипт перебирает все
-окна и все вкладки, а `set index of w to 1` поднимает нужную вкладку внутри группы.
-Классические вкладки (несколько `tabs` в одном окне) покрывает `set selected tab`.
+With native macOS tabs, AppleScript reports **each tab as a separate `window` with a
+single `tab`** (two physical windows can show up as five `windows` with identical
+`bounds`). That is why the script walks all windows and all tabs: `set index of w to
+1` then switches to the right tab within the group. Classic tabs (several `tabs` in
+one window) are covered by `set selected tab`.
 
-**Имя процесса claude.** Нативная сборка лежит в `~/.local/share/claude/versions/2.1.x`,
-и её `p_comm` — версия («2.1.295»), а не `claude`. Опознавать по `argv[0]` или пути.
+For other terminals, `native` just brings the terminal application to the front.
 
-**`cwd` в хуках — текущий каталог шелла агента**, он меняется после `cd`. Проект сессии —
-cwd первого события, дальше не перезаписывается.
+### 3. `new_window` — resume in a new window (fallback)
 
-Свойства проверены по словарю Terminal.app (`sdef /System/Applications/Utilities/Terminal.app`):
-`tty` у класса `tab` (read-only text), `selected tab` / `index` / `miniaturized`
-у класса `window`. Альтернатива `set selected of t to true` тоже валидна.
-
-### 2. tmux (если `TMUX_PANE` есть)
-
-Если запускаешь агентов в tmux внутри Terminal.app — сначала переключить панель,
-потом сфокусировать само окно Terminal.app стратегией 1:
-
-```bash
-tmux select-window -t "$TMUX_PANE"
-tmux select-pane  -t "$TMUX_PANE"
-```
-
-### 3. Открыть новое окно (фоллбэк)
+Only if the agent process is gone and its tab could not be found:
 
 ```applescript
 tell application "Terminal"
-  do script "cd " & quoted form of theCwd & " && claude --resume " & theSessionId
+  do script "cd '<cwd>' && claude --resume '<session_id>'"
   activate
 end tell
 ```
 
-Срабатывает, только если стратегия 1 вернула `notfound` (например, таб уже закрыт).
+### Other terminals
 
-### 4. Прочие терминалы — отложить до M7
+`TerminalFocus` is meant to be extended. Possible implementations:
 
-Интерфейс `TerminalFocusStrategy` остаётся расширяемым, но реализовывать сразу
-не нужно. Когда понадобится:
-
-| Терминал | Как |
+| Terminal | How |
 |---|---|
-| iTerm2 | тот же AppleScript, но перебор `sessions of t`, матч по `tty of s`, затем `select w/t/s` |
+| iTerm2 | the same AppleScript approach, iterating `sessions of t` and matching `tty of s`, then `select` |
 | WezTerm | `wezterm cli activate-pane --pane-id $WEZTERM_PANE` |
-| Kitty | `kitty @ focus-window --match id:$KITTY_WINDOW_ID` (нужен `allow_remote_control yes`) |
-| Ghostty, терминал VS Code/Cursor | скриптинга нет: фоллбэк на Accessibility API — найти окно приложения, у которого `AXTitle` содержит basename от `cwd`, затем `AXRaise` + `activate`. Таб внутри окна так не выбрать — известное ограничение |
+| Kitty | `kitty @ focus-window --match id:$KITTY_WINDOW_ID` (needs `allow_remote_control yes`) |
+| Ghostty, VS Code / Cursor terminals | no scripting: Accessibility API — find the app window whose `AXTitle` contains the basename of `cwd`, then `AXRaise` + `activate` (cannot select a tab inside the window) |
 
-Поскольку сейчас нужен только Terminal.app, **Accessibility-разрешение на M5 не
-требуется** — хватает Automation для Terminal.app. Это заметно упрощает настройку.
+### Empty slot
 
-### Если слот пуст
+The button under a dark light starts a **new** agent in the directory from
+`empty_slot_button_launches`, and the agent lands in that same slot: the command is
+`cd <dir> && AGENTLIGHT_PREFER_SLOT=<n> claude`, and the `SessionStart` hook passes
+the preferred slot on to the daemon.
 
-Кнопка под погашенным светофором запускает **новый** агент в каталоге из
-`config.empty_slot_button_launches`, и тот автоматически заезжает в этот же слот
-(аллокатор отдаёт предпочтение слоту, с чьей кнопки был запуск — передать
-`AGENTLIGHT_PREFER_SLOT=n` в окружение запускаемого процесса, `SessionStart`-хук
-прочитает его и передаст демону).
+## 5.7. macOS permissions
 
-## 5.7. Разрешения TCC — что реально придётся нажать
-
-| Разрешение | Зачем | Где выдать |
+| Permission | Why | Where |
 |---|---|---|
-| **Automation** → Terminal | AppleScript-фокус таба по tty — **единственное нужное на M5** | всплывёт диалог при первом нажатии кнопки; потом Настройки → Конфиденциальность → Автоматизация |
-| Accessibility | только для AX-фоллбэка (Ghostty и пр., фаза M7) | Настройки → Конфиденциальность → Универсальный доступ → добавить `AgentLight.app` вручную |
-| Input Monitoring | **не нужно** для vendor-HID | — |
+| **Automation** → Terminal | focusing a tab by tty via AppleScript — the only one needed | a prompt appears on the first button press; later: System Settings → Privacy & Security → Automation |
+| Accessibility | not needed (only for a future AX fallback) | — |
+| Input Monitoring | **not needed** for a vendor-defined HID device | — |
 
-Грабли:
+Notes:
 
-* Из launchd-агента диалоги TCC появляются, но могут быть «за» другими окнами —
-  при первой настройке лучше запустить демон из терминала руками.
-* Пересборка бинарника меняет cdhash → разрешения сбрасываются. Лечится
-  подписью стабильным self-signed сертификатом:
-  `codesign -s "AgentLight Dev" --force --deep AgentLight.app`, и при разработке
-  не менять bundle id.
-* `agentlight doctor` должен проверять все разрешения и печатать точные шаги
-  («открой Настройки → ... → добавь это»), иначе диагностика превращается в ад.
+* Prompts triggered from a launchd agent may appear behind other windows.
+* Permissions are bound to the signature and the bundle id. An ad-hoc signed build
+  changes its cdhash on every rebuild and loses them; sign with a stable identity
+  (see [host/README.md](../host/README.md#signing-and-automation)).
+* `agentlight doctor` checks the daemon, the hooks, the device and the Automation
+  permission, and prints what to fix.
 
-## 5.8. Транспорт USB
+## 5.8. USB transport
 
 ```swift
 final class HIDTransport: DeviceTransport {
-    // IOHIDManagerCreate + matching dict: VendorID 0x1209, ProductID 0xAC01
-    // IOHIDManagerRegisterDeviceMatchingCallback → устройство появилось
-    // IOHIDManagerRegisterDeviceRemovalCallback  → устройство исчезло
-    // IOHIDDeviceRegisterInputReportCallback     → !BTN / !PONG / !READY
-    // IOHIDDeviceSetReport(kIOHIDReportTypeOutput, ...) → команды
+    // IOHIDManager matching: VID 0x1209 or 0x2E8A + usage page 0xFF00
+    // device matching callback → device attached
+    // device removal callback  → device gone
+    // input report callback    → BUTTON / PONG / READY / POWER
+    // IOHIDDeviceSetReport(kIOHIDReportTypeOutput, …) → commands
 }
 ```
 
-* `PING` раз в 1000 мс отдельным таймером, иначе железка погасит светофоры.
-* На `READY` (перезагрузка железки) — немедленно полный ресинк:
-  `BRIGHTNESS`, `CONFIG`, `SET_ALL`.
-* На removal — чистить ссылку, ждать matching callback, не опрашивать в цикле.
-* Несколько устройств: каждое получает «банк» из 4 слотов по порядку подключения —
-  первое показывает слоты 0..3, второе 4..7 и т. д. (`DeviceLink`). Устройство
-  узнаётся по `uid` из `READY`: переподключённое встаёт на свой прежний банк, если тот
-  свободен, иначе на минимальный свободный. Банк сверх `slot_count` горит выключенным.
-* Одна железка, видная и по HID, и по CDC, — одно устройство: говорим через транспорт,
-  что раньше в списке (HID), второй канал молчит, пока первый не пропадёт.
+* `PING` every 1000 ms on its own timer, otherwise the device turns the lights off.
+* On `READY` (the device rebooted) — an immediate full resync: `BRIGHTNESS`,
+  `CONFIG`, `SET_ALL`.
+* On removal — drop the reference and wait for the matching callback; no polling.
+* **Several devices**: each one gets a "bank" of 4 slots in connection order — the
+  first shows slots 0..3, the second 4..7, and so on (`DeviceLink`). A device is
+  recognised by the `uid` in `READY`: when it reconnects it gets its previous bank
+  back if that is free, otherwise the lowest free one. A bank beyond `slot_count`
+  stays dark.
+* A device visible over both HID and CDC is one device: the host talks over the
+  transport that comes first (HID); the other stays silent until the first one
+  disappears.
 
-### Сон и просыпание
+### Sleep and wake
 
 ```swift
-NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification ...)
-// → SET_ALL off, остановить PING
-NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification ...)
-// → пере-энумерация устройства, проверка живости всех PID, полный ресинк
+NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification …)
+// → SET_ALL off, stop PING
+NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.didWakeNotification …)
+// → re-enumerate the device, check every PID, full resync
 ```
 
-После сна часть агентов уже мертва — обязательно прогнать `kill(pid, 0)` по всем
-слотам, прежде чем что-то зажигать.
+Some agents may have died during sleep, so every slot gets a `kill(pid, 0)` check
+before anything lights up.
 
 ## 5.9. CLI
 
 ```
-agentlight install-hooks [--settings PATH]   # merge в ~/.claude/settings.json
-agentlight uninstall-hooks
-agentlight install-daemon                    # LaunchAgent + копия .app
-agentlight status                            # таблица: слот, состояние, проект, pid, терминал
-agentlight test [--slot N]                   # welcome / selftest / перебор состояний
-agentlight pin <slot> [path]                 # закрепить проект за слотом
+agentlight install-hooks [--settings PATH]   # merge hooks into ~/.claude/settings.json (others untouched)
+agentlight uninstall-hooks [--settings PATH] # remove exactly our hooks
+agentlight install-daemon                    # LaunchAgent for AgentLight.app, start it
+agentlight uninstall-daemon                  # stop and remove the LaunchAgent
+agentlight status                            # slots, states, projects, pids, terminals
+agentlight doctor                            # check the daemon, hooks, device, permissions
+agentlight test                              # cycle through all states on the device and in the menu bar
+agentlight selftest                          # device self-test animation
+agentlight focus <slot>                      # same as a button press
+agentlight mute <slot>                       # mute a slot
+agentlight release <slot>                    # free a slot
+agentlight pin <slot> [path]                 # pin a project (default: current directory) to a slot
+agentlight unpin [path]
 agentlight brightness <0-255>
-agentlight focus <slot>                      # то же, что кнопка — отладка фокуса без железа
-agentlight doctor                            # устройство, разрешения, хуки, порт, версия протокола
-agentlight hook                              # внутреннее: читает JSON со stdin, POST в демон
+agentlight replay <file.jsonl> [--live] [--speed N]   # run recorded hooks through the state machine (or the live daemon)
 agentlight logs [-f]
-agentlight flash <uf2>                       # picotool reboot -f -u + заливка
+agentlight hook                              # internal: the SessionStart hook, stdin → daemon
 ```
+
+Slots are numbered from 0 (buttons on the device from 1).
 
 ## 5.10. LaunchAgent
 
+`agentlight install-daemon` writes
 `~/Library/LaunchAgents/dev.grisha-gu.agentlight.daemon.plist`:
 
 ```xml
@@ -416,20 +380,21 @@ agentlight flash <uf2>                       # picotool reboot -f -u + зали�
   <key>RunAtLoad</key>             <true/>
   <key>KeepAlive</key>             <dict><key>SuccessfulExit</key><false/></dict>
   <key>ProcessType</key>           <string>Interactive</string>
-  <key>StandardOutPath</key>       <string>/tmp/agentlight.out.log</string>
-  <key>StandardErrorPath</key>     <string>/tmp/agentlight.err.log</string>
+  <key>StandardOutPath</key>       <string>~/.agentlight/agentlightd.log</string>
+  <key>StandardErrorPath</key>     <string>~/.agentlight/agentlightd.log</string>
 </dict></plist>
 ```
 
+Restart after a rebuild:
+
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.grisha-gu.agentlight.daemon.plist
-launchctl kickstart -k gui/$(id -u)/dev.grisha-gu.agentlight.daemon   # перезапуск после пересборки
+launchctl kickstart -k gui/$(id -u)/dev.grisha-gu.agentlight.daemon
 ```
 
-## 5.11. Разработка без железа
+## 5.11. Development without hardware
 
-`FakeTransport` рисует 4 светофора ANSI-цветами в терминале и читает нажатия
-клавиш `1234` как кнопки:
+`FakeTransport` draws the four lights with ANSI colours in the terminal and reads the
+keys `1`–`4` as buttons:
 
 ```
 $ agentlightd --fake-device
@@ -439,34 +404,32 @@ $ agentlightd --fake-device
   │ ○  │ │ ○  │ │ ●  │ │ ○  │   G
   └────┘ └────┘ └────┘ └────┘
    attn   busy   idle    off
-  agent-ind  backend   infra    —
-  [1]      [2]      [3]      [4]   ← нажми цифру = кнопка
+  [1]      [2]      [3]      [4]   ← press a digit = button
 ```
 
-Это позволяет сделать M4–M5 целиком, пока едут компоненты. Те же 4 светофора
-рисует иконка в строке меню и её popover (M4, `MenuBar/`), так что видеть
-состояние агентов можно и вообще без устройства.
+The menu bar icon and its popover show the same lights, so AgentLight is usable even
+without the device.
 
-Запись и воспроизведение событий:
+Recording and replaying events:
 
 ```bash
-agentlightd --record ~/replay.jsonl     # писать все входящие хуки
-agentlight replay ~/replay.jsonl --speed 4   # прогнать в стейт-машину, сверить состояния
+agentlightd --record ~/replay.jsonl              # write every incoming hook
+agentlight replay ~/replay.jsonl --speed 4        # run them through the state machine
 ```
 
-## 5.12. Чеклист приёмки хоста
+## 5.12. Test checklist
 
-* [x] запуск одного агента → welcome → зелёный; ввод промпта → жёлтый; ответ → зелёный (строка меню, 2026-10-16)
-* [ ] `Bash(rm ...)` с запросом разрешения → красный; разрешил → жёлтый → зелёный
-* [ ] 4 агента одновременно, каждый в своём слоте, состояния не путаются
-* [ ] 5-й агент → в overflow, без светофора; закрыл 2-го → 5-й заехал в слот 1 с welcome
-* [ ] `/clear` → светофор не гаснет и не меняет слот
-* [ ] `claude --resume` в том же окне → тот же слот
-* [ ] `kill -9` агента → слот гаснет в течение 5 с
-* [ ] `launchctl kill` демона → все светофоры гаснут через 3 с (watchdog)
-* [ ] перезапуск демона → состояния восстановлены из `state.json`
-* [ ] выдернуть USB и вставить → всё восстанавливается без перезапуска демона
-* [ ] сон/просыпание ноута → корректные состояния, мёртвые слоты погашены
-* [ ] кнопка фокусирует правильный таб Terminal.app: таб в активном окне, таб в фоновом окне, окно свёрнуто в Dock
-* [ ] кнопка на пустом слоте запускает агента, и он заезжает именно в этот слот
-* [ ] измерить задержку: `UserPromptSubmit` → жёлтый. Цель < 50 мс
+* [ ] one agent → welcome → green; submit a prompt → yellow; answer → green
+* [ ] a command that needs permission → red; allow → yellow → green
+* [ ] 4 agents at once, each in its own slot, states do not mix
+* [ ] a 5th agent → overflow, no light; close the 2nd → the 5th moves into a slot with a welcome
+* [ ] `/clear` → the light neither goes out nor changes slot
+* [ ] `claude --resume` in the same window → same slot
+* [ ] `kill -9` the agent → the slot goes dark within 5 s
+* [ ] kill the daemon → all lights go dark within 3 s (device watchdog)
+* [ ] restart the daemon → states restored from `state.json`
+* [ ] unplug and replug USB → everything recovers without restarting the daemon
+* [ ] sleep / wake → correct states, dead slots dark
+* [ ] the button focuses the right Terminal.app tab: in the active window, in a background window, in a window minimised to the Dock
+* [ ] the button on an empty slot starts an agent, and it lands in that slot
+* [ ] latency `UserPromptSubmit` → yellow under 50 ms
