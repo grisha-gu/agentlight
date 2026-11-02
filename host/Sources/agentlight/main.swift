@@ -259,6 +259,9 @@ func status() {
     for s in st.overflow {
         print("  ·  без светофора: \(describe(s))  (\(s.state.name))")
     }
+    for s in st.background ?? [] {
+        print("  ·  фоновая, скрыта: \(describe(s))  (\(s.state.name))")
+    }
 }
 
 func doctor() {

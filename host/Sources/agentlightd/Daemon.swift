@@ -69,10 +69,12 @@ final class Daemon {
         link.start()
 
         // после перезапуска демона часть агентов из state.json могла умереть
-        apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive))
+        apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive,
+                              isBackground: TerminalCapture.isBackground))
         sweepTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.apply(self.allocator.sweep(config: self.config, now: Date(), isAlive: TerminalCapture.isAlive))
+            self.apply(self.allocator.sweep(config: self.config, now: Date(), isAlive: TerminalCapture.isAlive,
+                                            isBackground: TerminalCapture.isBackground))
             self.transcripts.sync(self.allocator.transcripts)  // файл новой сессии мог появиться позже хука
         }
 
@@ -96,7 +98,8 @@ final class Daemon {
         Log.info("просыпание: проверяю живость агентов")
         allocator.postpone(by: Date().timeIntervalSince(since))
         asleepSince = nil
-        apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive))
+        apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive,
+                              isBackground: TerminalCapture.isBackground))
         link.resume()
     }
 
@@ -118,9 +121,10 @@ final class Daemon {
             return
         }
         let before = allocator.slotIndex(of: event.sessionId)
-        apply(allocator.handle(event, config: config, now: Date()))
+        apply(allocator.handle(event, config: config, now: Date(), isBackground: TerminalCapture.isBackground))
         if event.name == "SessionStart" || event.name == "SessionEnd" || before != allocator.slotIndex(of: event.sessionId) {
-            let slot = allocator.slotIndex(of: event.sessionId).map { "слот \($0)" } ?? "без слота"
+            let slot = allocator.slotIndex(of: event.sessionId).map { "слот \($0)" }
+                ?? (allocator.isBackground(event.sessionId) ? "фоновая, без окна — скрыта" : "без слота")
             Log.info("\(event.name) \(event.sessionId.prefix(8)) \(event.cwd ?? "") → \(slot)")
         }
     }
@@ -187,6 +191,11 @@ final class Daemon {
                 scheduleSave()
                 s = allocator.slots[slot].session!
                 Log.info("слот \(slot): нашёл claude pid \(found.pid) tty \(found.tty ?? "?") по cwd")
+            }
+            // сессия под демоном Claude Code: её терминал из SessionStart — pty демона,
+            // а смотрят её во вкладке-хозяине (терминал хук снимает только на старте)
+            if let pid = s.claudePid, let owner = TerminalCapture.ownerTerminal(of: pid) {
+                s.terminal = owner
             }
             focuser.focus(s, order: config.terminalFocusOrder, done: done)
         case (.press, nil):
@@ -290,7 +299,8 @@ final class Daemon {
                 .init(slot: i, light: s.light, muted: s.muted, rebinding: s.rebinding != nil, session: s.session)
             },
             overflow: allocator.overflow,
-            automation: TerminalFocus.automationStatus()
+            automation: TerminalFocus.automationStatus(),
+            background: allocator.background
         )
     }
 

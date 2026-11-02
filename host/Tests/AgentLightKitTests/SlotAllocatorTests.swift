@@ -285,4 +285,77 @@ extension SlotAllocatorTests {
         send("SessionStart", "a")
         XCTAssertEqual(a.slotIndex(of: "a"), 0)
     }
+
+    // MARK: - Фоновые сессии без окна (bg-spare, claude --bg)
+
+    func testBackgroundSessionGetsNoSlot() {
+        let bg: Set<Int32> = [77]
+        func send(_ name: String, _ sid: String, pid: Int32? = nil, reason: String? = nil) {
+            var e = HookEvent(name: name, sessionId: sid, cwd: "/p/x")
+            e.reason = reason
+            if let pid { e.agentlight = HookExtras(claudePid: pid) }
+            _ = a.handle(e, config: config, now: now) { bg.contains($0) }
+        }
+        send("SessionStart", "spare", pid: 77)
+        send("UserPromptSubmit", "spare")
+        send("PreToolUse", "spare")
+        XCTAssertEqual(a.lights, [.off, .off, .off, .off])
+        XCTAssertTrue(a.isBackground("spare"))
+        XCTAssertEqual(a.background.first?.state, .busy)
+
+        send("SessionStart", "term", pid: 5)
+        XCTAssertEqual(a.slotIndex(of: "term"), 0)
+
+        send("SessionEnd", "spare", reason: "other")
+        XCTAssertTrue(a.background.isEmpty)
+        XCTAssertEqual(a.lights, [.idle, .off, .off, .off])
+    }
+
+    func testSweepHidesBackgroundSessionsAlreadyInSlots() {
+        send("SessionStart", "a", pid: 1)
+        send("SessionStart", "spare", pid: 2)
+        send("SessionStart", "c", pid: 3)
+        alive = [1, 2, 3]
+        now += 1
+        let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }) { $0 == 2 }
+        XCTAssertTrue(fx.changed)
+        XCTAssertEqual(a.slotIndex(of: "c"), 1, "слоты сдвинулись без дырки")
+        XCTAssertTrue(a.isBackground("spare"))
+
+        alive = [1, 3]
+        _ = sweep(after: 5)
+        XCTAssertTrue(a.background.isEmpty, "умерший фоновый процесс забыт")
+    }
+
+    func testOldStateJSONWithoutBackgroundDecodes() throws {
+        send("SessionStart", "a")
+        var json = try JSONSerialization.jsonObject(with: StateStore.encoder.encode(a)) as! [String: Any]
+        json.removeValue(forKey: "background")
+        let data = try JSONSerialization.data(withJSONObject: json)
+        let loaded = try StateStore.decoder.decode(SlotAllocator.self, from: data)
+        XCTAssertEqual(loaded.slotIndex(of: "a"), 0)
+        XCTAssertTrue(loaded.background.isEmpty)
+    }
+
+    func testSweepReturnsHiddenSessionThatHasAWindow() {
+        let bg: Set<Int32> = [2]
+        func send(_ name: String, _ sid: String, pid: Int32) {
+            var e = HookEvent(name: name, sessionId: sid, cwd: "/p/x")
+            e.agentlight = HookExtras(claudePid: pid)
+            _ = a.handle(e, config: config, now: now) { bg.contains($0) }
+        }
+        send("SessionStart", "a", pid: 1)
+        send("SessionStart", "fork", pid: 2)
+        send("UserPromptSubmit", "fork", pid: 2)
+        XCTAssertTrue(a.isBackground("fork"))
+
+        // форк показывают во вкладке-хозяине — он больше не фоновый
+        alive = [1, 2]
+        now += 1
+        let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }) { _ in false }
+        XCTAssertEqual(fx.welcome, [1])
+        XCTAssertTrue(a.background.isEmpty)
+        XCTAssertEqual(a.slotIndex(of: "fork"), 1)
+        XCTAssertEqual(a.lights, [.idle, .busy, .off, .off])
+    }
 }

@@ -24,11 +24,14 @@ public struct StatusReport: Codable, Sendable {
     public var deviceConnected: Bool
     public var slots: [SlotInfo]
     public var overflow: [SessionRecord]
-    /// у старого демона поля нет
+    /// у старого демона полей нет
     public var automation: TerminalFocus.Automation?
+    /// фоновые сессии без окна — светофоров не получают
+    public var background: [SessionRecord]?
 
     public init(version: String, pid: Int32, device: String, deviceConnected: Bool,
-                slots: [SlotInfo], overflow: [SessionRecord], automation: TerminalFocus.Automation?) {
+                slots: [SlotInfo], overflow: [SessionRecord], automation: TerminalFocus.Automation?,
+                background: [SessionRecord]? = nil) {
         self.version = version
         self.pid = pid
         self.device = device
@@ -36,6 +39,7 @@ public struct StatusReport: Codable, Sendable {
         self.slots = slots
         self.overflow = overflow
         self.automation = automation
+        self.background = background
     }
 }
 
