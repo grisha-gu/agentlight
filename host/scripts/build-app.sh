@@ -85,9 +85,12 @@ if [[ "$MODE" == "--install" ]]; then
     cp -R "$APP" "$INSTALL_DIR/"
     ln -sf "$INSTALL_DIR/AgentLight.app/Contents/MacOS/agentlight" /usr/local/bin/agentlight
     echo "установлено: $INSTALL_DIR/AgentLight.app, CLI: /usr/local/bin/agentlight"
-    if launchctl print "gui/$(id -u)/com.agentlight.daemon" >/dev/null 2>&1; then
-        launchctl kickstart -k "gui/$(id -u)/com.agentlight.daemon"
+    if launchctl print "gui/$(id -u)/dev.grisha-gu.agentlight.daemon" >/dev/null 2>&1; then
+        launchctl kickstart -k "gui/$(id -u)/dev.grisha-gu.agentlight.daemon"
         echo "демон перезапущен"
+    elif launchctl print "gui/$(id -u)/com.agentlight.daemon" >/dev/null 2>&1; then
+        # до 0.2.0 был другой bundle id и метка; install-daemon заменит старый LaunchAgent
+        "$INSTALL_DIR/AgentLight.app/Contents/MacOS/agentlight" install-daemon
     else
         echo "дальше: agentlight install-daemon && agentlight install-hooks"
     fi

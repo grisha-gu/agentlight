@@ -79,19 +79,25 @@ final class Daemon {
         let nc = NSWorkspace.shared.notificationCenter
         nc.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             Log.info("сон: гашу светофоры")
-            self?.asleepSince = Date()
+            self?.asleepSince = self?.asleepSince ?? Date()  // сон из DarkWake — без просыпания между ними
             self?.link.pause()
         }
-        nc.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
-            guard let self else { return }
-            Log.info("просыпание: проверяю живость агентов")
-            if let since = self.asleepSince { self.allocator.postpone(by: Date().timeIntervalSince(since)) }
-            self.asleepSince = nil
-            self.apply(self.allocator.sweep(config: self.config, now: Date(), isAlive: TerminalCapture.isAlive))
-            self.link.resume()
+        // DarkWake → FullWake (USB разбудил при закрытой крышке, потом открыли) приходит без
+        // didWake — только экраны просыпаются. Без второго наблюдателя демон так и стоял на паузе.
+        for name in [NSWorkspace.didWakeNotification, NSWorkspace.screensDidWakeNotification] {
+            nc.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in self?.wake() }
         }
         link.show(lights)
         transcripts.sync(allocator.transcripts)
+    }
+
+    private func wake() {
+        guard let since = asleepSince else { return }  // экраны просыпаются и без сна мака
+        Log.info("просыпание: проверяю живость агентов")
+        allocator.postpone(by: Date().timeIntervalSince(since))
+        asleepSince = nil
+        apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive))
+        link.resume()
     }
 
     func shutdown() {
@@ -283,7 +289,8 @@ final class Daemon {
             slots: allocator.slots.enumerated().map { i, s in
                 .init(slot: i, light: s.light, muted: s.muted, rebinding: s.rebinding != nil, session: s.session)
             },
-            overflow: allocator.overflow
+            overflow: allocator.overflow,
+            automation: TerminalFocus.automationStatus()
         )
     }
 

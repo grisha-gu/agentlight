@@ -117,9 +117,12 @@ var settingsURL: URL {
     return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude/settings.json")
 }
 
-let agentLabel = "com.agentlight.daemon"
-var launchAgentURL: URL {
-    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(agentLabel).plist")
+let agentLabel = "dev.grisha-gu.agentlight.daemon"
+/// до 0.2.0 (bundle id com.agentlight.app); install-daemon его убирает
+let legacyAgentLabel = "com.agentlight.daemon"
+
+func launchAgentURL(_ label: String = agentLabel) -> URL {
+    FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/LaunchAgents/\(label).plist")
 }
 
 @discardableResult
@@ -199,23 +202,28 @@ func installDaemon() {
     ]
     do {
         let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-        try FileManager.default.createDirectory(at: launchAgentURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-        try data.write(to: launchAgentURL)
+        try FileManager.default.createDirectory(at: launchAgentURL().deletingLastPathComponent(), withIntermediateDirectories: true)
+        try data.write(to: launchAgentURL())
     } catch {
-        fail("\(launchAgentURL.path): \(error)")
+        fail("\(launchAgentURL().path): \(error)")
     }
     let domain = "gui/\(getuid())"
+    if FileManager.default.fileExists(atPath: launchAgentURL(legacyAgentLabel).path) {
+        run("/bin/launchctl", ["bootout", "\(domain)/\(legacyAgentLabel)"], quiet: true)
+        try? FileManager.default.removeItem(at: launchAgentURL(legacyAgentLabel))
+        print("старый LaunchAgent \(legacyAgentLabel) убран")
+    }
     run("/bin/launchctl", ["bootout", "\(domain)/\(agentLabel)"], quiet: true)
-    guard run("/bin/launchctl", ["bootstrap", domain, launchAgentURL.path]) == 0 else {
+    guard run("/bin/launchctl", ["bootstrap", domain, launchAgentURL().path]) == 0 else {
         fail("launchctl bootstrap не прошёл")
     }
-    print("LaunchAgent установлен: \(launchAgentURL.path)")
+    print("LaunchAgent установлен: \(launchAgentURL().path)")
     print("демон: \(daemon.path), лог: \(Paths.log.path)")
 }
 
 func uninstallDaemon() {
     run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(agentLabel)"], quiet: true)
-    try? FileManager.default.removeItem(at: launchAgentURL)
+    try? FileManager.default.removeItem(at: launchAgentURL())
     print("LaunchAgent убран")
 }
 
@@ -265,7 +273,7 @@ func doctor() {
     check(st != nil, "демон отвечает на 127.0.0.1:\(config.port) (v\(st?.version ?? ""), pid \(st?.pid ?? 0))",
           "демон не отвечает на 127.0.0.1:\(config.port) — `agentlight install-daemon` или запусти agentlightd руками")
 
-    let agentInstalled = FileManager.default.fileExists(atPath: launchAgentURL.path)
+    let agentInstalled = FileManager.default.fileExists(atPath: launchAgentURL().path)
     let agentLoaded = run("/bin/launchctl", ["print", "gui/\(getuid())/\(agentLabel)"], quiet: true) == 0
     check(agentInstalled && agentLoaded, "LaunchAgent установлен и загружен",
           agentInstalled ? "LaunchAgent есть, но не загружен — `agentlight install-daemon`"
@@ -293,7 +301,18 @@ func doctor() {
     let ports = ((try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? []).filter { $0.hasPrefix("cu.usbmodem") }
     print("ℹ️  CDC-порты: \(ports.isEmpty ? "нет" : ports.map { "/dev/" + $0 }.joined(separator: ", "))")
     print("ℹ️  CLI: \(cliPath)")
-    print("ℹ️  Automation → Terminal понадобится на M5 (фокус по кнопке)")
+    switch st?.automation {
+    case .granted:
+        check(true, "Automation → Terminal разрешено (фокус по кнопке)", "")
+    case .denied:
+        check(false, "", "Automation → Terminal запрещено — Системные настройки → Конфиденциальность и безопасность → Автоматизация → AgentLight → Terminal")
+    case .notAsked:
+        print("ℹ️  Automation → Terminal ещё не спрашивали — нажми кнопку на пульте или `agentlight focus 0` и разреши")
+    case .unknown:
+        print("ℹ️  Automation → Terminal не проверить: Terminal не запущен")
+    case nil:
+        break  // демон не отвечает или старый
+    }
     exit(problems == 0 ? 0 : 1)
 }
 

@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleIdentifier</key>
-    <string>com.agentlight.app</string>
+    <string>dev.grisha-gu.agentlight</string>
     <key>CFBundleName</key>
     <string>AgentLight</string>
     <key>CFBundleDisplayName</key>

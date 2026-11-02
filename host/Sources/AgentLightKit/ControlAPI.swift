@@ -24,15 +24,18 @@ public struct StatusReport: Codable, Sendable {
     public var deviceConnected: Bool
     public var slots: [SlotInfo]
     public var overflow: [SessionRecord]
+    /// у старого демона поля нет
+    public var automation: TerminalFocus.Automation?
 
     public init(version: String, pid: Int32, device: String, deviceConnected: Bool,
-                slots: [SlotInfo], overflow: [SessionRecord]) {
+                slots: [SlotInfo], overflow: [SessionRecord], automation: TerminalFocus.Automation?) {
         self.version = version
         self.pid = pid
         self.device = device
         self.deviceConnected = deviceConnected
         self.slots = slots
         self.overflow = overflow
+        self.automation = automation
     }
 }
 
@@ -69,5 +72,5 @@ public struct ControlReply: Codable, Sendable {
 }
 
 public enum AgentLightVersion {
-    public static let string = "0.1.0"
+    public static let string = "0.2.0"
 }

@@ -16,7 +16,7 @@ import argparse, atexit, datetime, glob, json, os, queue, re, subprocess, sys, t
 
 import serial
 
-LABEL = "com.agentlight.daemon"
+LABEL = "dev.grisha-gu.agentlight.daemon"
 PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{LABEL}.plist")
 COLORS = ["красный", "жёлтый", "зелёный"]
 SLOTS = 4
@@ -643,7 +643,7 @@ def main():
     if daemon_running():
         if not args.stop_daemon:
             sys.exit("демон agentlightd держит порт — добавь --stop-daemon "
-                     "(или launchctl bootout gui/$UID/com.agentlight.daemon)")
+                     "(или launchctl bootout gui/$UID/dev.grisha-gu.agentlight.daemon)")
         stop_daemon()
 
     d = Device(args.port or find_port())

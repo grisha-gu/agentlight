@@ -22,7 +22,7 @@ Rust сможет всё, но через FFI и `osascript`-шеллауты.
 ```
 AgentLight.app/
 └── Contents/
-    ├── Info.plist             # LSUIElement=1, CFBundleIdentifier=com.agentlight.app
+    ├── Info.plist             # LSUIElement=1, CFBundleIdentifier=dev.grisha-gu.agentlight
     ├── MacOS/
     │   ├── agentlightd        # демон
     │   └── agentlight         # CLI (symlink в /usr/local/bin)
@@ -404,13 +404,13 @@ agentlight flash <uf2>                       # picotool reboot -f -u + зали�
 
 ## 5.10. LaunchAgent
 
-`~/Library/LaunchAgents/com.agentlight.daemon.plist`:
+`~/Library/LaunchAgents/dev.grisha-gu.agentlight.daemon.plist`:
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
-  <key>Label</key>                 <string>com.agentlight.daemon</string>
+  <key>Label</key>                 <string>dev.grisha-gu.agentlight.daemon</string>
   <key>ProgramArguments</key>
     <array><string>/Applications/AgentLight.app/Contents/MacOS/agentlightd</string></array>
   <key>RunAtLoad</key>             <true/>
@@ -422,8 +422,8 @@ agentlight flash <uf2>                       # picotool reboot -f -u + зали�
 ```
 
 ```bash
-launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/com.agentlight.daemon.plist
-launchctl kickstart -k gui/$(id -u)/com.agentlight.daemon   # перезапуск после пересборки
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/dev.grisha-gu.agentlight.daemon.plist
+launchctl kickstart -k gui/$(id -u)/dev.grisha-gu.agentlight.daemon   # перезапуск после пересборки
 ```
 
 ## 5.11. Разработка без железа

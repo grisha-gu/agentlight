@@ -49,7 +49,8 @@ agentlight doctor
 Сборка всегда universal (arm64 + x86_64). `build-app.sh` подписывает первым, что найдёт:
 **Developer ID Application** → самоподписанный «AgentLight Dev» → ad-hoc
 (можно задать явно: `SIGN_IDENTITY="…" scripts/build-app.sh`).
-Разрешения TCC привязаны к подписи: сменилась подпись — Automation выдаётся заново.
+Разрешения TCC привязаны к подписи и bundle id (`dev.grisha-gu.agentlight`): сменилось
+одно из них — Automation выдаётся заново. Состояние разрешения показывает `agentlight doctor`.
 
 * При первом нажатии кнопки фокуса macOS спросит «AgentLight хочет управлять Terminal» →
   «Разрешить». Если отказали: Системные настройки → Конфиденциальность и безопасность →

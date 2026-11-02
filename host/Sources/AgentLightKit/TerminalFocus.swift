@@ -1,3 +1,4 @@
+import CoreServices
 import Foundation
 
 /// Фокус терминала агента по кнопке, docs/05-host-macos.md §5.6.
@@ -88,4 +89,27 @@ public enum TerminalFocus {
       return "ok"
     end run
     """
+
+    /// Разрешение Automation → Terminal у текущего процесса, без диалога TCC.
+    /// Смысл имеет только в демоне: CLI из терминала проверял бы права самого терминала.
+    public enum Automation: String, Codable, Sendable {
+        case granted, denied
+        /// диалога ещё не было — появится при первом нажатии
+        case notAsked
+        /// Terminal не запущен — TCC не отвечает про незапущенное приложение
+        case unknown
+    }
+
+    public static func automationStatus() -> Automation {
+        var target = AEAddressDesc()
+        let id = Array(terminalBundleId.utf8)
+        guard AECreateDesc(DescType(typeApplicationBundleID), id, id.count, &target) == noErr else { return .unknown }
+        defer { AEDisposeDesc(&target) }
+        switch AEDeterminePermissionToAutomateTarget(&target, AEEventClass(typeWildCard), AEEventID(typeWildCard), false) {
+        case noErr: return .granted
+        case OSStatus(errAEEventNotPermitted): return .denied
+        case OSStatus(errAEEventWouldRequireUserConsent): return .notAsked
+        default: return .unknown
+        }
+    }
 }
