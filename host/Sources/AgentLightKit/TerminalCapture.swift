@@ -96,19 +96,38 @@ public enum TerminalCapture {
         return argv0(pid).map { ($0 as NSString).lastPathComponent == "claude" } ?? false
     }
 
+    /// Сессия без своего окна: её процесс держит демон Claude Code — фоновая сессия
+    /// (`claude --bg`, форк в фон) под `bg-pty-host` или запасной процесс `--bg-spare`,
+    /// который демон поднимает заранее и который успевает отработать SessionStart.
+    public static func isBackground(_ pid: Int32) -> Bool {
+        if arguments(of: pid)?.contains("--bg-spare") == true { return true }
+        guard let ppid = procInfo(pid)?.ppid, ppid > 1 else { return false }
+        return arguments(of: ppid)?.contains("--bg-pty-host") == true
+    }
+
     static func argv0(_ pid: Int32) -> String? {
+        arguments(of: pid)?.first
+    }
+
+    static func arguments(of pid: Int32) -> [String]? {
         var mib: [Int32] = [CTL_KERN, KERN_PROCARGS2, pid]
         var size = 0
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return nil }
         var buf = [UInt8](repeating: 0, count: size)
-        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0 else { return nil }
-        // argc (int32), затем путь exec, нули, потом argv[0]
+        guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > 4 else { return nil }
+        // argc (int32), затем путь exec, нули, потом argv[0..argc)
+        let argc = buf.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
         var i = 4
         while i < size && buf[i] != 0 { i += 1 }
         while i < size && buf[i] == 0 { i += 1 }
-        let start = i
-        while i < size && buf[i] != 0 { i += 1 }
-        return start < i ? String(decoding: buf[start..<i], as: UTF8.self) : nil
+        var args: [String] = []
+        while args.count < argc && i < size {
+            let start = i
+            while i < size && buf[i] != 0 { i += 1 }
+            args.append(String(decoding: buf[start..<i], as: UTF8.self))
+            i += 1
+        }
+        return args
     }
 
     static func cwd(of pid: Int32) -> String? {

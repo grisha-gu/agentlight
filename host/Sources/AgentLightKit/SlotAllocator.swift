@@ -6,11 +6,27 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
     public private(set) var slots: [Slot]
     /// сессии без светофора, ждут освобождения слота
     public private(set) var overflow: [SessionRecord]
+    /// фоновые сессии без своего окна (их хостит демон Claude Code): светофор им не положен,
+    /// но события поглощаем, чтобы они не заехали в слот через claim по первому же хуку
+    public private(set) var background: [SessionRecord]
 
     public init(slotCount: Int = Config().slotCount) {
         slots = Array(repeating: Slot(), count: slotCount)
         overflow = []
+        background = []
     }
+
+    enum CodingKeys: String, CodingKey { case slots, overflow, background }
+
+    /// state.json старых версий — без `background`
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        slots = try c.decode([Slot].self, forKey: .slots)
+        overflow = try c.decode([SessionRecord].self, forKey: .overflow)
+        background = try c.decodeIfPresent([SessionRecord].self, forKey: .background) ?? []
+    }
+
+    public typealias BackgroundCheck = (Int32) -> Bool
 
     /// Что поменялось после события — для транспорта и UI.
     public struct Effects: Equatable, Sendable {
@@ -29,26 +45,31 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         slots.firstIndex { $0.session?.sessionId == sessionId }
     }
 
+    public func isBackground(_ sessionId: String) -> Bool {
+        background.contains { $0.sessionId == sessionId }
+    }
+
     // MARK: - События
 
-    public mutating func handle(_ event: HookEvent, config: Config, now: Date) -> Effects {
+    public mutating func handle(_ event: HookEvent, config: Config, now: Date,
+                                isBackground: BackgroundCheck = { _ in false }) -> Effects {
         let before = self
         var fx = Effects()
 
         switch SlotStateMachine.transition(for: event) {
         case .start:
-            fx.merge(claim(event, config: config, now: now))
+            fx.merge(claim(event, config: config, now: now, isBackground: isBackground))
         case .end(let rebind):
             fx.merge(end(event, rebind: rebind, config: config, now: now))
         case .set(let state):
             if !touch(event, now: now) {
                 // демон стартовал позже агента или хуки поставлены посреди сессии
-                fx.merge(claim(event, config: config, now: now))
+                fx.merge(claim(event, config: config, now: now, isBackground: isBackground))
             }
             update(event.sessionId) { $0.set(state, at: now) }
         case .ignore:
             if !touch(event, now: now) {
-                fx.merge(claim(event, config: config, now: now))
+                fx.merge(claim(event, config: config, now: now, isBackground: isBackground))
             }
         }
         fx.changed = fx.changed || lights != before.lights || self != before
@@ -118,12 +139,21 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
 
     // MARK: - Периодическая проверка (раз в 5 с)
 
-    /// Таймауты BUSY, TTL, окна rebinding и живость PID.
-    public mutating func sweep(config: Config, now: Date, isAlive: (Int32) -> Bool) -> Effects {
+    /// Таймауты BUSY, TTL, окна rebinding, живость PID и фоновые сессии, попавшие в слоты
+    /// раньше (state.json прошлой версии, pid узнали позже первого события).
+    public mutating func sweep(config: Config, now: Date, isAlive: (Int32) -> Bool,
+                               isBackground: BackgroundCheck = { _ in false }) -> Effects {
         var fx = Effects()
         let before = self
 
+        background.removeAll { Self.isDead($0, config: config, now: now, isAlive: isAlive) }
         overflow.removeAll { Self.isDead($0, config: config, now: now, isAlive: isAlive) }
+        func hide(_ s: SessionRecord) -> Bool {
+            guard let pid = s.claudePid, isBackground(pid) else { return false }
+            background.append(s)
+            return true
+        }
+        overflow.removeAll(where: hide)
         for i in overflow.indices { Self.degradeBusy(&overflow[i], config: config, now: now) }
 
         // с конца: free(i) сдвигает влево только уже проверенные слоты
@@ -134,7 +164,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
                 continue
             }
             guard slots[i].rebinding == nil, var s = slots[i].session else { continue }
-            if Self.isDead(s, config: config, now: now, isAlive: isAlive) {
+            if Self.isDead(s, config: config, now: now, isAlive: isAlive) || hide(s) {
                 fx.merge(free(i, now: now))
                 continue
             }
@@ -183,6 +213,10 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             body(&overflow[i])
             return true
         }
+        if let i = background.firstIndex(where: { $0.sessionId == id }) {
+            body(&background[i])
+            return true
+        }
         return false
     }
 
@@ -191,14 +225,21 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
     }
 
     /// claim(session_id, cwd, pid), docs/01-architecture.md §1.4.
-    private mutating func claim(_ event: HookEvent, config: Config, now: Date) -> Effects {
+    private mutating func claim(_ event: HookEvent, config: Config, now: Date,
+                                isBackground: BackgroundCheck) -> Effects {
         // 1. сессия уже известна
         if touch(event, now: now) { return Effects() }
 
         var record = SessionRecord(sessionId: event.sessionId, cwd: event.cwd, state: .idle, at: now)
         record.absorb(event, at: now)
 
-        // 2. /clear, /resume: тот же терминал → тот же слот, без welcome
+        // 2. фоновая сессия без окна (в т.ч. /clear внутри неё) — без светофора
+        if let pid = record.claudePid, isBackground(pid) {
+            background.append(record)
+            return Effects(changed: true)
+        }
+
+        // 3. /clear, /resume: тот же терминал → тот же слот, без welcome
         if let i = rebindTarget(for: record, source: event.source, now: now) {
             if let old = slots[i].session, old.terminal != nil, record.terminal == nil {
                 record.terminal = old.terminal
@@ -208,7 +249,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             return Effects(changed: true)
         }
 
-        // 3. явная просьба (кнопка пустого слота), 4. пин, 5. первый свободный
+        // 4. явная просьба (кнопка пустого слота), 5. пин, 6. первый свободный
         let preferred = [event.agentlight?.preferSlot, config.pinnedSlot(for: record.cwd)]
             .compactMap { $0 }
             .filter { slots.indices.contains($0) }
@@ -217,7 +258,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             return Effects(welcome: [i], changed: true)
         }
 
-        // 6. мест нет — в overflow, без светофора
+        // 7. мест нет — в overflow, без светофора
         overflow.append(record)
         return Effects(changed: true)
     }
@@ -240,6 +281,10 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
     }
 
     private mutating func end(_ event: HookEvent, rebind: Bool, config: Config, now: Date) -> Effects {
+        if let i = background.firstIndex(where: { $0.sessionId == event.sessionId }) {
+            background.remove(at: i)
+            return Effects(changed: true)
+        }
         if let i = overflow.firstIndex(where: { $0.sessionId == event.sessionId }) {
             overflow.remove(at: i)
             return Effects(changed: true)
