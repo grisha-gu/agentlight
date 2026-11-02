@@ -1,0 +1,110 @@
+# Tag vX.Y.Z → tests, signed + notarized AgentLight-X.Y.Z.zip in Releases,
+# then (if the UPDATE_TAP variable is "true") a version bump in grisha-gu/homebrew-tap.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  app:
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      sha256: ${{ steps.zip.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check that the tag matches the app version
+        id: version
+        run: |
+          v="$(sed -n 's/.*static let string = "\(.*\)".*/\1/p' host/Sources/AgentLightKit/ControlAPI.swift)"
+          if [[ "v$v" != "$GITHUB_REF_NAME" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match AgentLightVersion $v"
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        working-directory: host
+        run: swift test
+
+      - name: Import the Developer ID certificate into a temporary keychain
+        env:
+          P12_BASE64: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          kc="$RUNNER_TEMP/signing.keychain-db"
+          kc_pass="$(uuidgen)"
+          security create-keychain -p "$kc_pass" "$kc"
+          security set-keychain-settings -lut 3600 "$kc"
+          security unlock-keychain -p "$kc_pass" "$kc"
+          echo "$P12_BASE64" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security import "$RUNNER_TEMP/cert.p12" -k "$kc" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          rm "$RUNNER_TEMP/cert.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$kc_pass" "$kc" > /dev/null
+          security list-keychains -d user -s "$kc" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning
+
+      - name: Build, sign, notarize
+        env:
+          NOTARY_KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+          NOTARY_KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          NOTARY_ISSUER: ${{ secrets.NOTARY_ISSUER_ID }}
+        run: |
+          export NOTARY_KEY="$RUNNER_TEMP/notary.p8"
+          printf '%s\n' "$NOTARY_KEY_P8" > "$NOTARY_KEY"
+          host/scripts/build-app.sh --dist
+          rm "$NOTARY_KEY"
+
+      - name: Publish the release
+        id: zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          zip="host/build.noindex/AgentLight-$VERSION.zip"
+          echo "sha256=$(shasum -a 256 "$zip" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          gh release create "$GITHUB_REF_NAME" "$zip" --title "AgentLight $VERSION" --generate-notes
+
+      - name: Remove the temporary keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+  tap:
+    needs: app
+    if: vars.UPDATE_TAP == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: packaging/homebrew
+
+      - uses: actions/checkout@v4
+        with:
+          repository: grisha-gu/homebrew-tap
+          token: ${{ secrets.TAP_TOKEN }}
+          path: tap
+
+      - name: Bump the cask
+        env:
+          VERSION: ${{ needs.app.outputs.version }}
+          SHA256: ${{ needs.app.outputs.sha256 }}
+        run: |
+          mkdir -p tap/Casks
+          sed -e "s/^  version \".*\"/  version \"$VERSION\"/" \
+              -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
+              packaging/homebrew/agentlight.rb > tap/Casks/agentlight.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/agentlight.rb
+          if git diff --cached --quiet; then
+            echo "cask is already at $VERSION"
+            exit 0
+          fi
+          git commit -m "agentlight $VERSION"
+          git push

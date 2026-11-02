@@ -251,9 +251,10 @@ hot-swap гнёзд), поэтому моделируется после раз�
   делать выключенным по умолчанию).
 * **Раздача приложения друзьям** (скрипт готов — `build-app.sh --dist`,
   инструкция — [host/README.md](../host/README.md#раздача-на-другие-маки)):
-  выпустить сертификат Developer ID Application, сохранить профиль `notarytool`,
-  собрать и нотаризовать первый zip, проверить на чужом маке (лучше Apple Silicon).
-  После смены подписи заново выдать себе Automation → Terminal.
+  2026-11-02 — сертификат Developer ID Application выпущен, профиль `agentlight-notary`
+  сохранён, `AgentLight-0.2.0.zip` нотаризован (Accepted, тикет вшит), у себя
+  переустановлено с новой подписью, Automation выдано заново.
+  Осталось проверить на чужом маке (лучше Apple Silicon).
 * **Публичный git-репозиторий** [github.com/grisha-gu/agentlight](https://github.com/grisha-gu/agentlight):
   **приватный с 2026-10-31** (`.gitignore`, лицензии MIT / CERN-OHL-P-2.0 / CC-BY-4.0,
   личное вычищено). Открыть после сборки rev. a: README и docs/ на английском,
@@ -261,15 +262,23 @@ hot-swap гнёзд), поэтому моделируется после раз�
   При открытии репо — свой USB VID/PID вместо дефолта Pico SDK `2E8A:000A`
   (`firmware/src/usb_descriptors.c`): заявка в pid.codes (VID 1209, нужен публичный
   репо с открытой лицензией) или в Raspberry Pi `usb-pid`. Отложено 2026-10-31.
-* **Релизы через GitHub Actions** (после публичного репо): по тегу `v*` раннер
-  `macos-*` гоняет тесты и `build-app.sh --dist`, zip уходит в Releases.
-  Сертификат Developer ID (`.p12` в base64 + пароль) и учётка `notarytool`
-  (лучше App Store Connect API key) — в secrets; на раннере временная связка ключей.
-* **Свой Homebrew tap** (как у [Chai](https://github.com/lvillani/chai)): репозиторий
-  `homebrew-tap` с `Casks/agentlight.rb` → `brew install <user>/tap/agentlight`,
-  обновления через `brew upgrade`. Cask ставит `.app`, симлинк CLI (`binary`) и в
-  `caveats` подсказывает `agentlight install-daemon && agentlight install-hooks`;
-  `zap` чистит `~/.agentlight`. Версию и sha256 в cask обновляет тот же CI-релиз.
+* **Релизы через GitHub Actions** — [.github/workflows/release.yml](../.github/workflows/release.yml)
+  (2026-11-02, ещё не запускался): по тегу `v*` на `macos-15` проверяет, что тег совпадает с
+  `AgentLightVersion`, гоняет `swift test`, импортирует Developer ID во временную связку
+  ключей и запускает `build-app.sh --dist` с ключом App Store Connect API (`NOTARY_KEY*`),
+  zip уходит в Releases. Secrets: `DEVELOPER_ID_P12`, `DEVELOPER_ID_P12_PASSWORD`,
+  `NOTARY_KEY_P8`, `NOTARY_KEY_ID`, `NOTARY_ISSUER_ID`.
+* **Свой Homebrew tap** (как у [Chai](https://github.com/lvillani/chai)): исходник cask —
+  [packaging/homebrew/agentlight.rb](../packaging/homebrew/agentlight.rb), job `tap` того же
+  релиза (если переменная `UPDATE_TAP` = `true`, токен `TAP_TOKEN`) подставляет версию и
+  sha256 и пушит в `grisha-gu/homebrew-tap` → `brew install grisha-gu/tap/agentlight`
+  (полное имя — Homebrew 7 сам доверяет tap, без `brew trust`). Cask ставит `.app` и
+  симлинк CLI, после установки/апгрейда перезапускает демон (`postflight_steps`);
+  LaunchAgent и хуки ставит/снимает сам пользователь (`caveats`) — `uninstall` cask
+  выполняется и при `brew upgrade`. `zap` снимает LaunchAgent и чистит `~/.agentlight`.
+  Проверено 2026-11-02 из локального tap (`brew style` чисто, установка, Gatekeeper,
+  postflight, удаление). Скачать zip brew сможет только из публичного репо.
+  Переход со своей установки: `brew install --cask --force` (уже есть `.app` и симлинк CLI).
   Нотаризованное приложение проходит Gatekeeper — потом можно подать в официальные
   casks (Chai оттуда выкинули ровно за ad-hoc подпись).
 

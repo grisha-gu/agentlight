@@ -67,7 +67,8 @@ agentlight doctor
    `xcrun notarytool store-credentials agentlight-notary --apple-id <почта> --team-id <TEAM_ID>`.
 
 Каждый релиз: `scripts/build-app.sh --dist` → подпись, нотаризация, степлер,
-`build.noindex/AgentLight-<версия>.zip`. У получателя:
+`build.noindex/AgentLight-<версия>.zip`. Или тег `v<версия>` — то же самое сделает
+GitHub Actions и выложит zip в Releases (docs/06-build-plan.md §6.9). У получателя:
 
 ```bash
 # распаковать, перетащить AgentLight.app в /Applications, затем

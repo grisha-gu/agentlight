@@ -12,6 +12,7 @@
 #
 # Нотаризация (--dist) берёт пароль из профиля notarytool, один раз:
 #   xcrun notarytool store-credentials agentlight-notary --apple-id … --team-id …
+# В CI вместо профиля — ключ App Store Connect API: NOTARY_KEY (путь к .p8), NOTARY_KEY_ID, NOTARY_ISSUER.
 set -euo pipefail
 
 HOST_DIR="$(cd "$(dirname "$0")/.." && pwd)"
@@ -72,7 +73,12 @@ if [[ "$MODE" == "--dist" ]]; then
     ZIP="$HOST_DIR/build.noindex/AgentLight-$VERSION.zip"
     rm -f "$ZIP"
     ditto -c -k --keepParent "$APP" "$ZIP"
-    xcrun notarytool submit "$ZIP" --keychain-profile "$NOTARY_PROFILE" --wait
+    if [[ -n "${NOTARY_KEY:-}" ]]; then
+        NOTARY_ARGS=(--key "$NOTARY_KEY" --key-id "$NOTARY_KEY_ID" --issuer "$NOTARY_ISSUER")
+    else
+        NOTARY_ARGS=(--keychain-profile "$NOTARY_PROFILE")
+    fi
+    xcrun notarytool submit "$ZIP" "${NOTARY_ARGS[@]}" --wait
     xcrun stapler staple "$APP"
     rm -f "$ZIP"
     ditto -c -k --keepParent "$APP" "$ZIP"   # перепаковка уже со степлером
