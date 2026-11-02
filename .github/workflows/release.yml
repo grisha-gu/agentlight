@@ -95,7 +95,8 @@ jobs:
           SHA256: ${{ needs.app.outputs.sha256 }}
         run: |
           mkdir -p tap/Casks
-          sed -e "s/^  version \".*\"/  version \"$VERSION\"/" \
+          sed -e '1,2d' \
+              -e "s/^  version \".*\"/  version \"$VERSION\"/" \
               -e "s/^  sha256 \".*\"/  sha256 \"$SHA256\"/" \
               packaging/homebrew/agentlight.rb > tap/Casks/agentlight.rb
           cd tap
