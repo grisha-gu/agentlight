@@ -15,6 +15,12 @@ final class Daemon {
     private var sweepTimer: Timer?
     private var saveScheduled = false
     private var asleepSince: Date?
+    /// последний снимок `claude agents --json` — сверка для реестра Claude Code
+    private var agentsList: ClaudeAgentsList?
+    private var agentsListFailure: String?
+    private var reportedProblems: Set<String> = []
+    private let censusQueue = DispatchQueue(label: "agentlight.census")
+    private var censusTimer: Timer?
 
     /// временная подмена огней на время `agentlight test`
     private var override: [LightState]?
@@ -70,12 +76,17 @@ final class Daemon {
 
         // после перезапуска демона часть агентов из state.json могла умереть
         apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive,
-                              roles: ClaudeSessions.roles()))
+                              roles: roles()))
         sweepTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
             guard let self else { return }
             self.apply(self.allocator.sweep(config: self.config, now: Date(), isAlive: TerminalCapture.isAlive,
-                                            roles: ClaudeSessions.roles()))
+                                            roles: roles()))
             self.transcripts.sync(self.allocator.transcripts)  // файл новой сессии мог появиться позже хука
+        }
+
+        refreshAgentsList()
+        censusTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            self?.refreshAgentsList()
         }
 
         let nc = NSWorkspace.shared.notificationCenter
@@ -99,8 +110,47 @@ final class Daemon {
         allocator.postpone(by: Date().timeIntervalSince(since))
         asleepSince = nil
         apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive,
-                              roles: ClaudeSessions.roles()))
+                              roles: roles()))
         link.resume()
+    }
+
+    // MARK: - Сверка с Claude Code
+
+    /// Кому светофор не положен: реестр Claude Code, сверенный с последним снимком публичного списка.
+    private func roles() -> SlotAllocator.Roles {
+        ClaudeCensus(registry: .load(), listed: agentsList).roles()
+    }
+
+    private func refreshAgentsList() {
+        censusQueue.async {
+            let r = ClaudeAgentsList.fetch()
+            DispatchQueue.main.async { [weak self] in self?.gotAgentsList(r) }
+        }
+    }
+
+    private func gotAgentsList(_ r: Result<ClaudeAgentsList, ClaudeAgentsList.FetchError>) {
+        switch r {
+        case .success(let l):
+            if agentsList == nil { Log.info("сверка с claude agents работает, сессий: \(l.items.count)") }
+            agentsList = l
+            if agentsListFailure != nil { Log.info("сверка с claude agents снова работает") }
+            agentsListFailure = nil
+        case .failure(let e):
+            agentsList = nil
+            if agentsListFailure != e.description { Log.warn("сверка с claude agents не работает: \(e)") }
+            agentsListFailure = e.description
+        }
+        let registry = ClaudeSessions.load()
+        let census = ClaudeCensus(registry: registry, listed: agentsList)
+        let sessions = allocator.slots.compactMap(\.session) + allocator.overflow + allocator.background
+        let problems = Set(census.problems(among: sessions.compactMap(\.claudePid)))
+        let version = registry.entries.values
+            .max { ($0.modifiedAt ?? .distantPast) < ($1.modifiedAt ?? .distantPast) }?.version ?? "?"
+        for p in problems.subtracting(reportedProblems).sorted() {
+            Log.warn("реестр Claude Code \(version) разошёлся с claude agents: \(p)")
+        }
+        reportedProblems = problems
+        apply(allocator.sweep(config: config, now: Date(), isAlive: TerminalCapture.isAlive, roles: census.roles()))
     }
 
     func shutdown() {
@@ -121,7 +171,7 @@ final class Daemon {
             return
         }
         let before = allocator.slotIndex(of: event.sessionId)
-        apply(allocator.handle(event, config: config, now: Date(), roles: ClaudeSessions.roles()))
+        apply(allocator.handle(event, config: config, now: Date(), roles: roles()))
         if event.name == "SessionStart" || event.name == "SessionEnd" || before != allocator.slotIndex(of: event.sessionId) {
             let slot = allocator.slotIndex(of: event.sessionId).map { "слот \($0)" }
                 ?? (allocator.isHidden(event.sessionId) ? "скрыта (заготовка или вкладка-оболочка)" : "без слота")

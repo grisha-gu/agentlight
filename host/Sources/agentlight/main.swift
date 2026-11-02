@@ -304,6 +304,7 @@ func doctor() {
     let ports = ((try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? []).filter { $0.hasPrefix("cu.usbmodem") }
     print("ℹ️  CDC-порты: \(ports.isEmpty ? "нет" : ports.map { "/dev/" + $0 }.joined(separator: ", "))")
     print("ℹ️  CLI: \(cliPath)")
+    claudeRegistryCheck(check)
     switch st?.automation {
     case .granted:
         check(true, "Automation → Terminal разрешено (фокус по кнопке)", "")
@@ -317,6 +318,36 @@ func doctor() {
         break  // демон не отвечает или старый
     }
     exit(problems == 0 ? 0 : 1)
+}
+
+/// Сверка внутреннего реестра Claude Code (`~/.claude/sessions`) с публичным `claude agents --json`:
+/// по реестру светофор узнаёт вкладки-оболочки и заготовки agent view, а его формат может смениться.
+func claudeRegistryCheck(_ check: (Bool, String, String) -> Void) {
+    let registry = ClaudeSessions.load()
+    let version = registry.entries.values
+        .max { ($0.modifiedAt ?? .distantPast) < ($1.modifiedAt ?? .distantPast) }?.version ?? "?"
+    let list: ClaudeAgentsList
+    switch ClaudeAgentsList.fetch() {
+    case .success(let l): list = l
+    case .failure(.noBinary):
+        print("ℹ️  claude не найден — сверку реестра Claude Code пропускаю")
+        return
+    case .failure(let e):
+        check(false, "", "\(e) — фоновые сессии решаются только по реестру, без сверки")
+        return
+    }
+    let live = registry.entries.keys.filter(TerminalCapture.isAlive)
+    guard !list.items.isEmpty || !live.isEmpty else {
+        print("ℹ️  сессий Claude Code нет — реестр сверить не с чем")
+        return
+    }
+    let census = ClaudeCensus(registry: registry, listed: list)
+    let problems = census.problems(among: Array(live) + Array(list.items.keys))
+    let hidden = live.filter(census.isHidden).count
+    check(problems.isEmpty,
+          "реестр Claude Code \(version) сходится с claude agents (сессий \(list.items.count), скрытых \(hidden))",
+          "реестр Claude Code \(version) разошёлся с claude agents — формат мог смениться:\n"
+            + problems.map { "     • \($0)" }.joined(separator: "\n"))
 }
 
 func pin(_ slot: Int, path: String?) {

@@ -20,6 +20,10 @@ public struct ClaudeSessions: Sendable {
         /// Флаг пропадает, когда из agent view отправили задачу: дальше это обычная фоновая сессия
         public var spare: Bool
         public var name: String?
+        /// версия Claude Code, записавшая файл
+        public var version: String?
+        /// когда файл последний раз переписывали (меняется со статусом сессии)
+        public var modifiedAt: Date?
 
         public var isParkedShell: Bool { kind == "interactive" && parkedJobId != nil }
         public var isSpare: Bool { kind == "bg" && spare }
@@ -31,17 +35,22 @@ public struct ClaudeSessions: Sendable {
         self.entries = entries
     }
 
+    /// `AGENTLIGHT_CLAUDE_SESSIONS` — подменить каталог реестра (проверить, что будет при смене формата).
     public static var directory: URL {
+        if let dir = ProcessInfo.processInfo.environment["AGENTLIGHT_CLAUDE_SESSIONS"] {
+            return URL(fileURLWithPath: dir)
+        }
         let base = ProcessInfo.processInfo.environment["CLAUDE_CONFIG_DIR"].map { URL(fileURLWithPath: $0) }
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude")
         return base.appendingPathComponent("sessions")
     }
 
     public static func load(from dir: URL = directory) -> ClaudeSessions {
-        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+        let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: [.contentModificationDateKey])) ?? []
         var out: [Int32: Entry] = [:]
         for f in files where f.pathExtension == "json" {
-            guard let data = try? Data(contentsOf: f), let e = parse(data) else { continue }
+            guard let data = try? Data(contentsOf: f), var e = parse(data) else { continue }
+            e.modifiedAt = try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
             out[e.pid] = e
         }
         return ClaudeSessions(entries: out)
@@ -56,17 +65,26 @@ public struct ClaudeSessions: Sendable {
                      jobId: o["jobId"] as? String,
                      parkedJobId: o["parkedJobId"] as? String,
                      spare: (o["spare"] as? Bool) ?? false,
-                     name: o["name"] as? String)
+                     name: o["name"] as? String,
+                     version: o["version"] as? String)
     }
 
     // MARK: - Решения
 
+    /// Реестр похож на тот, что мы знаем: есть записи с понятным `kind`. Пустой или
+    /// неузнаваемый реестр значит, что Claude Code сменил формат или место.
+    public var isRecognized: Bool {
+        entries.values.contains { $0.kind == "interactive" || $0.kind == "bg" }
+    }
+
     /// Сессии этого процесса светофор не положен: запасная заготовка демона или вкладка-оболочка,
     /// чья сессия уехала в фоновую задачу. Без файла в реестре — по argv: незанятая заготовка
-    /// (`--bg-spare`) файла ещё не пишет, а SessionStart уже отрабатывает.
+    /// (`--bg-spare`) файла ещё не пишет, а SessionStart уже отрабатывает. Но argv остаётся
+    /// `--bg-spare` и после того, как заготовке отдали задачу, поэтому верим ему, только
+    /// пока реестр в целом узнаваем — иначе лучше лишняя лампа, чем спрятанная работа.
     public func isHidden(_ pid: Int32, arguments: (Int32) -> [String]?) -> Bool {
         if let e = entries[pid] { return e.isSpare || e.isParkedShell }
-        return arguments(pid)?.contains("--bg-spare") == true
+        return isRecognized && arguments(pid)?.contains("--bg-spare") == true
     }
 
     /// Вкладка-оболочка, из которой фоновую сессию `pid` отправили в фон.
@@ -95,15 +113,6 @@ public struct ClaudeSessions: Sendable {
 // MARK: - Процессы (ввод-вывод)
 
 extension ClaudeSessions {
-    /// Снимок реестра для решений аллокатора.
-    public static func roles() -> SlotAllocator.Roles {
-        let reg = load()
-        return SlotAllocator.Roles(
-            isHidden: { reg.isHidden($0, arguments: TerminalCapture.arguments(of:)) },
-            parkedShell: { pid in reg.parkedShell(of: pid).flatMap { TerminalCapture.isAlive($0) ? $0 : nil } }
-        )
-    }
-
     /// Вкладка, в которой смотрят фоновую сессию `pid`: живой `claude attach` на её задачу,
     /// иначе вкладка-оболочка, из которой её отправили в фон (скорее всего показывает её же,
     /// но пользователь мог переключиться в agent view). nil — сессия не фоновая или окна нет.

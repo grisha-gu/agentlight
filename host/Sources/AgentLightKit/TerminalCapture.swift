@@ -60,6 +60,17 @@ public enum TerminalCapture {
         var name: String
         var ppid: Int32
         var tdev: dev_t
+        var start: Date
+    }
+
+    public static func startTime(of pid: Int32) -> Date? {
+        procInfo(pid)?.start
+    }
+
+    static func executablePath(_ pid: Int32) -> String? {
+        var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+        guard proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 else { return nil }
+        return String(cString: buf)
     }
 
     static func procInfo(_ pid: Int32) -> ProcInfo? {
@@ -70,8 +81,10 @@ public enum TerminalCapture {
         let name = withUnsafeBytes(of: info.kp_proc.p_comm) { raw in
             String(decoding: raw.prefix { $0 != 0 }, as: UTF8.self)
         }
+        let t = info.kp_proc.p_starttime
         return ProcInfo(name: name.hasPrefix("-") ? String(name.dropFirst()) : name,
-                        ppid: info.kp_eproc.e_ppid, tdev: info.kp_eproc.e_tdev)
+                        ppid: info.kp_eproc.e_ppid, tdev: info.kp_eproc.e_tdev,
+                        start: Date(timeIntervalSince1970: Double(t.tv_sec) + Double(t.tv_usec) / 1e6))
     }
 
     /// Сессия без SessionStart (стартовала раньше демона или хуков): ищем процесс `claude`,
@@ -99,10 +112,8 @@ public enum TerminalCapture {
     /// Нативная сборка называется версией («2.1.295»), поэтому смотрим argv[0] и путь бинарника.
     static func isClaude(_ pid: Int32) -> Bool {
         if procInfo(pid)?.name == "claude" { return true }
-        var buf = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
-        if proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 {
-            let path = String(cString: buf)
-            if path.contains("/claude/versions/") || path.hasSuffix("/claude") { return true }
+        if let path = executablePath(pid), path.contains("/claude/versions/") || path.hasSuffix("/claude") {
+            return true
         }
         return argv0(pid).map { ($0 as NSString).lastPathComponent == "claude" } ?? false
     }
@@ -111,7 +122,7 @@ public enum TerminalCapture {
         arguments(of: pid)?.first
     }
 
-    static func arguments(of pid: Int32) -> [String]? {
+    public static func arguments(of pid: Int32) -> [String]? {
         procArgs(pid)?.args
     }
 

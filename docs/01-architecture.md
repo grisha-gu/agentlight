@@ -154,6 +154,19 @@ claim(session_id, cwd, pid):
   events are absorbed there, and the entry is dropped on `SessionEnd` or when the
   process dies. The registry is re-read on every hook and in the 5-second sweep, which
   moves sessions between slots and `background` both ways.
+* **Cross-check against the public list.** The registry is an internal format and may
+  change in any release, so every 30 seconds the daemon also runs `claude agents
+  --json`, which the CLI documents for scripting. It lists exactly the real sessions
+  (interactive, `-p`, background) and leaves out parked tabs and spares. Where both
+  sources know a process and disagree, the public list wins, and the daemon logs a
+  warning once (`agentlight doctor` runs the same check). The list is ignored for a
+  process that started, or whose registry file changed, after the snapshot, and it
+  only ever hides a process that has a registry file or `--bg-spare` in its argv.
+  Without a recognizable registry, `--bg-spare` alone hides nothing, because a task
+  dispatched from agent view keeps that argv. What cannot be recovered without the
+  registry is the parked tab, so a forked session then takes a new slot instead of
+  its tab's. `AGENTLIGHT_CLAUDE_SESSIONS=<dir>` points the host at another registry
+  directory, which is how to rehearse a format change.
 * **The focus button for a background session** resolves its tab at press time: a
   live `claude attach <id>` on that job, otherwise the parked tab it came from (most
   likely still showing it), otherwise a new Terminal window with `claude attach <id>`.
