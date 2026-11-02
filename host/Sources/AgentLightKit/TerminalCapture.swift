@@ -10,9 +10,9 @@ public enum TerminalCapture {
         let pid = claudePid()
         var term = terminalRef(environment: env, tty: controllingTTY())
         if term.tty == nil, let pid { term.tty = tty(of: pid) }
-        // форк или `claude --bg` под демоном Claude Code: его pty не окно, показывают его
-        // во вкладке, из которой подняли демон, — у неё и берём терминал
-        if let pid, let owner = ownerTerminal(of: pid) { term = owner }
+        // фоновая сессия под демоном Claude Code: её pty не окно — берём терминал вкладки,
+        // где её смотрят (кнопка всё равно пересчитает это в момент нажатия)
+        if let pid, let viewer = ClaudeSessions.viewer(of: pid, scanAttach: false).terminal { term = viewer }
         return HookExtras(claudePid: pid,
                           preferSlot: env["AGENTLIGHT_PREFER_SLOT"].flatMap { Int($0) },
                           terminal: term)
@@ -77,12 +77,8 @@ public enum TerminalCapture {
     /// Сессия без SessionStart (стартовала раньше демона или хуков): ищем процесс `claude`,
     /// запущенный в cwd сессии или в его ближайшем предке. Неоднозначно — не угадываем.
     public static func locateClaude(cwd: String) -> (pid: Int32, tty: String?, cwd: String)? {
-        let count = proc_listallpids(nil, 0)
-        guard count > 0 else { return nil }
-        var pids = [Int32](repeating: 0, count: Int(count) + 32)
-        let n = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size))
-        let found: [(pid: Int32, cwd: String)] = pids.prefix(Int(max(n, 0))).compactMap { pid in
-            guard pid > 0, isClaude(pid), let dir = Self.cwd(of: pid),
+        let found: [(pid: Int32, cwd: String)] = allPids().compactMap { pid in
+            guard isClaude(pid), let dir = Self.cwd(of: pid),
                   cwd == dir || cwd.hasPrefix(dir.hasSuffix("/") ? dir : dir + "/") else { return nil }
             return (pid, dir)
         }
@@ -90,6 +86,14 @@ public enum TerminalCapture {
         let best = found.filter { $0.cwd.count == deepest }
         guard best.count == 1 else { return nil }
         return (best[0].pid, tty(of: best[0].pid), best[0].cwd)
+    }
+
+    static func allPids() -> [Int32] {
+        let count = proc_listallpids(nil, 0)
+        guard count > 0 else { return [] }
+        var pids = [Int32](repeating: 0, count: Int(count) + 32)
+        let n = proc_listallpids(&pids, Int32(pids.count * MemoryLayout<Int32>.size))
+        return pids.prefix(Int(max(n, 0))).filter { $0 > 0 }
     }
 
     /// Нативная сборка называется версией («2.1.295»), поэтому смотрим argv[0] и путь бинарника.
@@ -101,46 +105,6 @@ public enum TerminalCapture {
             if path.contains("/claude/versions/") || path.hasSuffix("/claude") { return true }
         }
         return argv0(pid).map { ($0 as NSString).lastPathComponent == "claude" } ?? false
-    }
-
-    /// Сессия без окна: запасной процесс `--bg-spare`, который демон Claude Code поднимает
-    /// заранее и который успевает отработать SessionStart, или сессия под `bg-pty-host`
-    /// (`claude --bg`, форк в фон), чья вкладка-хозяин уже закрыта.
-    public static func isBackground(_ pid: Int32) -> Bool {
-        if arguments(of: pid)?.contains("--bg-spare") == true { return true }
-        guard isUnderPtyHost(pid) else { return false }
-        return windowOwner(of: pid) == nil
-    }
-
-    /// Процесс claude в терминале, где показывается сессия демона Claude Code. Цепочка:
-    /// claude ← `--bg-pty-host` ← `claude daemon run … --spawned-by {"pid":N}`; N — та вкладка,
-    /// из которой форк отправили в фон, если она ещё жива и это всё ещё claude с tty.
-    public static func windowOwner(of pid: Int32) -> Int32? {
-        guard isUnderPtyHost(pid),
-              let host = procInfo(pid)?.ppid,
-              let daemon = procInfo(host)?.ppid, daemon > 1,
-              let owner = spawnedBy(arguments(of: daemon) ?? []),
-              owner != pid, isClaude(owner), tty(of: owner) != nil else { return nil }
-        return owner
-    }
-
-    /// Терминал вкладки-хозяина для сессии под демоном Claude Code (см. `windowOwner`).
-    public static func ownerTerminal(of pid: Int32) -> TerminalRef? {
-        guard let owner = windowOwner(of: pid) else { return nil }
-        return terminalRef(environment: environment(of: owner) ?? [:], tty: tty(of: owner))
-    }
-
-    static func isUnderPtyHost(_ pid: Int32) -> Bool {
-        guard let ppid = procInfo(pid)?.ppid, ppid > 1 else { return false }
-        return arguments(of: ppid)?.contains("--bg-pty-host") == true
-    }
-
-    /// `--spawned-by {"label":"claude","cwd":"…","pid":93193}` из argv демона
-    static func spawnedBy(_ args: [String]) -> Int32? {
-        guard let i = args.firstIndex(of: "--spawned-by"), i + 1 < args.count,
-              let obj = try? JSONSerialization.jsonObject(with: Data(args[i + 1].utf8)) as? [String: Any],
-              let pid = (obj["pid"] as? NSNumber)?.int32Value, pid > 1 else { return nil }
-        return pid
     }
 
     static func argv0(_ pid: Int32) -> String? {

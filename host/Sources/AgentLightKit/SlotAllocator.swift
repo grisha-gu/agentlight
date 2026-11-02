@@ -6,8 +6,9 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
     public private(set) var slots: [Slot]
     /// сессии без светофора, ждут освобождения слота
     public private(set) var overflow: [SessionRecord]
-    /// фоновые сессии без окна (их хостит демон Claude Code, а вкладки-хозяина нет): светофор им не положен,
-    /// но события поглощаем, чтобы они не заехали в слот через claim по первому же хуку
+    /// скрытые сессии: запасная заготовка демона Claude Code и вкладка-оболочка, чья сессия
+    /// уехала в фон. Светофор им не положен, но события поглощаем, чтобы они не заехали
+    /// в слот через claim по первому же хуку. (Имя — из state.json прошлых версий.)
     public private(set) var background: [SessionRecord]
 
     public init(slotCount: Int = Config().slotCount) {
@@ -26,7 +27,21 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         background = try c.decodeIfPresent([SessionRecord].self, forKey: .background) ?? []
     }
 
-    public typealias BackgroundCheck = (Int32) -> Bool
+    /// Что известно о процессе claude сессии (`ClaudeSessions.roles()`; в тестах — подставное).
+    public struct Roles {
+        /// сессии процесса светофор не положен
+        public var isHidden: (Int32) -> Bool
+        /// для фоновой сессии — pid вкладки-оболочки, из которой её отправили в фон
+        public var parkedShell: (Int32) -> Int32?
+
+        public init(isHidden: @escaping (Int32) -> Bool = { _ in false },
+                    parkedShell: @escaping (Int32) -> Int32? = { _ in nil }) {
+            self.isHidden = isHidden
+            self.parkedShell = parkedShell
+        }
+
+        public static var none: Roles { Roles() }
+    }
 
     /// Что поменялось после события — для транспорта и UI.
     public struct Effects: Equatable, Sendable {
@@ -45,33 +60,35 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         slots.firstIndex { $0.session?.sessionId == sessionId }
     }
 
-    public func isBackground(_ sessionId: String) -> Bool {
+    public func isHidden(_ sessionId: String) -> Bool {
         background.contains { $0.sessionId == sessionId }
     }
 
     // MARK: - События
 
     public mutating func handle(_ event: HookEvent, config: Config, now: Date,
-                                isBackground: BackgroundCheck = { _ in false }) -> Effects {
+                                roles: Roles = .none) -> Effects {
         let before = self
         var fx = Effects()
 
         switch SlotStateMachine.transition(for: event) {
         case .start:
-            fx.merge(claim(event, config: config, now: now, isBackground: isBackground))
+            fx.merge(claim(event, config: config, now: now, roles: roles))
         case .end(let rebind):
             fx.merge(end(event, rebind: rebind, config: config, now: now))
         case .set(let state):
             if !touch(event, now: now) {
                 // демон стартовал позже агента или хуки поставлены посреди сессии
-                fx.merge(claim(event, config: config, now: now, isBackground: isBackground))
+                fx.merge(claim(event, config: config, now: now, roles: roles))
             }
             update(event.sessionId) { $0.set(state, at: now) }
         case .ignore:
             if !touch(event, now: now) {
-                fx.merge(claim(event, config: config, now: now, isBackground: isBackground))
+                fx.merge(claim(event, config: config, now: now, roles: roles))
             }
         }
+        // заготовка из agent view стала задачей: показать сразу, не ждать sweep
+        fx.merge(reveal(only: event.sessionId, roles: roles))
         fx.changed = fx.changed || lights != before.lights || self != before
         return fx
     }
@@ -142,14 +159,14 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
     /// Таймауты BUSY, TTL, окна rebinding, живость PID и фоновые сессии, попавшие в слоты
     /// раньше (state.json прошлой версии, pid узнали позже первого события).
     public mutating func sweep(config: Config, now: Date, isAlive: (Int32) -> Bool,
-                               isBackground: BackgroundCheck = { _ in false }) -> Effects {
+                               roles: Roles = .none) -> Effects {
         var fx = Effects()
         let before = self
 
         background.removeAll { Self.isDead($0, config: config, now: now, isAlive: isAlive) }
         overflow.removeAll { Self.isDead($0, config: config, now: now, isAlive: isAlive) }
         func hide(_ s: SessionRecord) -> Bool {
-            guard let pid = s.claudePid, isBackground(pid) else { return false }
+            guard let pid = s.claudePid, roles.isHidden(pid) else { return false }
             background.append(s)
             return true
         }
@@ -164,17 +181,40 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
                 continue
             }
             guard slots[i].rebinding == nil, var s = slots[i].session else { continue }
-            if Self.isDead(s, config: config, now: now, isAlive: isAlive) || hide(s) {
+            if Self.isDead(s, config: config, now: now, isAlive: isAlive) {
                 fx.merge(free(i, now: now))
+                continue
+            }
+            if hide(s) {
+                // вкладку отправили в фон: её слот достаётся фоновой сессии, без прыжка лампы
+                if let j = slots.indices.first(where: { j in
+                    j != i && slots[j].rebinding == nil &&
+                        slots[j].session?.claudePid.flatMap(roles.parkedShell) == s.claudePid
+                }) {
+                    slots[i].session = slots[j].session  // заглушку вкладки сохраняем
+                    fx.merge(free(j, now: now))
+                } else {
+                    fx.merge(free(i, now: now))
+                }
                 continue
             }
             Self.degradeBusy(&s, config: config, now: now)
             slots[i].session = s
         }
-        // спрятанные прошлой версией (тогда любая сессия под bg-pty-host считалась
-        // безоконной) — возвращаются, раз у них нашлась живая вкладка
-        let shown = background.filter { s in s.claudePid.map { !isBackground($0) } ?? false }
+        fx.merge(reveal(only: nil, roles: roles))
+        fx.changed = fx.changed || self != before
+        return fx
+    }
+
+    /// Скрытые сессии, которым светофор теперь положен: заготовке из agent view отдали задачу,
+    /// спрятанные прошлой версией (тогда любая сессия под bg-pty-host считалась безоконной).
+    private mutating func reveal(only id: String?, roles: Roles) -> Effects {
+        let shown = background.filter { s in
+            (id == nil || s.sessionId == id) && (s.claudePid.map { !roles.isHidden($0) } ?? false)
+        }
+        guard !shown.isEmpty else { return Effects() }
         background.removeAll { s in shown.contains { $0.sessionId == s.sessionId } }
+        var fx = Effects(changed: true)
         for s in shown {
             if let i = slots.firstIndex(where: \.isFree) {
                 occupy(i, with: s)
@@ -183,7 +223,6 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
                 overflow.append(s)
             }
         }
-        fx.changed = fx.changed || self != before
         return fx
     }
 
@@ -238,16 +277,24 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
 
     /// claim(session_id, cwd, pid), docs/01-architecture.md §1.4.
     private mutating func claim(_ event: HookEvent, config: Config, now: Date,
-                                isBackground: BackgroundCheck) -> Effects {
+                                roles: Roles) -> Effects {
         // 1. сессия уже известна
         if touch(event, now: now) { return Effects() }
 
         var record = SessionRecord(sessionId: event.sessionId, cwd: event.cwd, state: .idle, at: now)
         record.absorb(event, at: now)
 
-        // 2. фоновая сессия без окна (в т.ч. /clear внутри неё) — без светофора
-        if let pid = record.claudePid, isBackground(pid) {
+        // 2. заготовка демона или вкладка-оболочка (в т.ч. /clear внутри неё) — без светофора
+        if let pid = record.claudePid, roles.isHidden(pid) {
             background.append(record)
+            return Effects(changed: true)
+        }
+
+        // 2a. сессию отправили в фон: форк занимает слот своей вкладки-оболочки, без welcome
+        if let shell = record.claudePid.flatMap(roles.parkedShell),
+           let i = slots.indices.first(where: { slots[$0].rebinding == nil && slots[$0].session?.claudePid == shell }) {
+            background.append(slots[i].session!)
+            slots[i].session = record
             return Effects(changed: true)
         }
 

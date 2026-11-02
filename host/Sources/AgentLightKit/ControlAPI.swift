@@ -26,7 +26,7 @@ public struct StatusReport: Codable, Sendable {
     public var overflow: [SessionRecord]
     /// у старого демона полей нет
     public var automation: TerminalFocus.Automation?
-    /// фоновые сессии без окна — светофоров не получают
+    /// скрытые сессии (заготовка демона Claude Code, вкладка-оболочка) — светофоров не получают
     public var background: [SessionRecord]?
 
     public init(version: String, pid: Int32, device: String, deviceConnected: Bool,

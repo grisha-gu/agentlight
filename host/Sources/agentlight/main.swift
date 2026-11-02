@@ -260,7 +260,7 @@ func status() {
         print("  ·  без светофора: \(describe(s))  (\(s.state.name))")
     }
     for s in st.background ?? [] {
-        print("  ·  фоновая, скрыта: \(describe(s))  (\(s.state.name))")
+        print("  ·  скрыта (заготовка или вкладка-оболочка): \(describe(s))  (\(s.state.name))")
     }
 }
 

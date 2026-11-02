@@ -124,24 +124,40 @@ welcome animation.
 ```
 claim(session_id, cwd, pid):
   1. if session_id already has a slot → return it
-  1a. if the claude process has no window (spare, or daemon-hosted with no live owner tab) → hidden "background" list
+  1a. if the claude process is a daemon spare or a parked tab → hidden "background" list
+  1b. if it is a background session whose parked tab holds a slot → take that slot, no welcome
   2. if a slot is in `rebinding` with key (cwd, pid) → take it, no welcome
   3. if the config pins cwd (or a parent path) to a slot and that slot is free → take it
   4. otherwise → the lowest free index 0..slot_count-1
   5. if nothing is free → overflow queue (no light)
 ```
 
-* **Daemon-hosted sessions** (`claude --bg`, a session forked to the background) run
-  under Claude Code's own daemon: their parent is `bg-pty-host`, and their pty is
-  not a terminal window. The user watches them from the tab that started the daemon
-  (`claude daemon run --spawned-by {"pid":N}`). While that claude process N is alive,
-  the session gets its own light, and the hook reports N's terminal (tty and env),
-  so the focus button switches to that tab. A session with no live owner tab, and
-  the spare `--bg-spare` process Claude Code pre-spawns (it runs `SessionStart`
-  without a user), get no light: their events go to the hidden `background` list
-  (shown by `agentlight status`), and the entry is dropped on `SessionEnd` or when
-  the process dies. The check also runs in the 5-second sweep, which moves sessions
-  between slots and `background` both ways.
+* **Background sessions** (`claude --bg`, a session sent to the background, a task
+  dispatched from agent view) run under Claude Code's own daemon, in a pty that is
+  not a terminal window. Their roles come from Claude Code's registry,
+  `~/.claude/sessions/<pid>.json` (internal format, checked on 2.1.309–2.1.316):
+  * `kind: "bg"` with a `jobId` is a background session; it gets a light like any
+    other session.
+  * `kind: "interactive"` with `parkedJobId` is a **parked tab**: its session was
+    forked into job `parkedJobId`, and the process stays on as a viewer for agent view
+    and attached sessions. Its own session gets no light; its slot passes to the
+    session of that job, so the light the user associates with the tab stays put.
+    `parkedJobId` does not change when the user switches sessions inside the tab, so
+    what the tab shows right now is not knowable.
+  * `spare: true` is the spare process the daemon pre-spawns for agent view's input
+    box. It has no light until the user dispatches a task from agent view: then the
+    flag disappears and the same process becomes an ordinary background session. An
+    unclaimed spare has no registry file yet but already runs `SessionStart`; it is
+    recognized by `--bg-spare` in its argv.
+
+  Hidden sessions go to the `background` list (shown by `agentlight status`); their
+  events are absorbed there, and the entry is dropped on `SessionEnd` or when the
+  process dies. The registry is re-read on every hook and in the 5-second sweep, which
+  moves sessions between slots and `background` both ways.
+* **The focus button for a background session** resolves its tab at press time: a
+  live `claude attach <id>` on that job, otherwise the parked tab it came from (most
+  likely still showing it), otherwise a new Terminal window with `claude attach <id>`.
+  A second `attach` only mirrors the session, it does not take it over.
 * `release(slot)` happens on `SessionEnd`, on a liveness check (`kill(pid, 0)`
   every 5 s), or on a TTL (no events for 8 hours). The TTL only applies to sessions
   without a known PID, and time the Mac spends asleep does not count.

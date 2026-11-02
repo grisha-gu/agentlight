@@ -269,6 +269,14 @@ tell application "Terminal"
 end tell
 ```
 
+### Background sessions
+
+A session hosted by Claude Code's daemon has no window of its own. Before the chain
+runs, the daemon looks for a tab that shows it (see `docs/01-architecture.md` §1.4):
+a `claude attach` on its job, or the parked tab it was sent from, and focuses that
+tab with the chain above. If there is none, it opens `claude attach <job>` in a new
+Terminal window instead.
+
 ### Other terminals
 
 `TerminalFocus` is meant to be extended. Possible implementations:

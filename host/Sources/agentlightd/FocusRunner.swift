@@ -26,6 +26,18 @@ final class FocusRunner {
         }
     }
 
+    /// Фоновая сессия, которую ни одна вкладка не показывает: `claude attach` в новом окне.
+    /// Второй экран той же сессии безопасен — attach только показывает, не перехватывает.
+    func attach(job: String, cwd: String?, name: String, done: @escaping (String) -> Void) {
+        let cmd = TerminalFocus.attachCommand(cwd: cwd, job: job)
+        queue.async {
+            let r = Self.osascript(TerminalFocus.terminalRunScript, [cmd])
+            let result = r.ok ? "фоновая сессия без окна — открыл claude attach \(job)" : "attach: \(r.output)"
+            Log.info("фокус \(name): \(result)")
+            DispatchQueue.main.async { done(result) }
+        }
+    }
+
     private static func run(_ steps: [TerminalFocus.Step]) -> String {
         guard !steps.isEmpty else { return "нечем фокусировать: нет tty и терминал неизвестен" }
         var clientTTY: String?

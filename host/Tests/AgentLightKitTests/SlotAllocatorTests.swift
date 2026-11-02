@@ -286,7 +286,7 @@ extension SlotAllocatorTests {
         XCTAssertEqual(a.slotIndex(of: "a"), 0)
     }
 
-    // MARK: - Фоновые сессии без окна (bg-spare, claude --bg)
+    // MARK: - Скрытые сессии (заготовка bg-spare, вкладка-оболочка)
 
     func testBackgroundSessionGetsNoSlot() {
         let bg: Set<Int32> = [77]
@@ -294,13 +294,13 @@ extension SlotAllocatorTests {
             var e = HookEvent(name: name, sessionId: sid, cwd: "/p/x")
             e.reason = reason
             if let pid { e.agentlight = HookExtras(claudePid: pid) }
-            _ = a.handle(e, config: config, now: now) { bg.contains($0) }
+            _ = a.handle(e, config: config, now: now, roles: .init(isHidden: { bg.contains($0) }))
         }
         send("SessionStart", "spare", pid: 77)
         send("UserPromptSubmit", "spare")
         send("PreToolUse", "spare")
         XCTAssertEqual(a.lights, [.off, .off, .off, .off])
-        XCTAssertTrue(a.isBackground("spare"))
+        XCTAssertTrue(a.isHidden("spare"))
         XCTAssertEqual(a.background.first?.state, .busy)
 
         send("SessionStart", "term", pid: 5)
@@ -317,10 +317,10 @@ extension SlotAllocatorTests {
         send("SessionStart", "c", pid: 3)
         alive = [1, 2, 3]
         now += 1
-        let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }) { $0 == 2 }
+        let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }, roles: .init(isHidden: { $0 == 2 }))
         XCTAssertTrue(fx.changed)
         XCTAssertEqual(a.slotIndex(of: "c"), 1, "слоты сдвинулись без дырки")
-        XCTAssertTrue(a.isBackground("spare"))
+        XCTAssertTrue(a.isHidden("spare"))
 
         alive = [1, 3]
         _ = sweep(after: 5)
@@ -342,20 +342,70 @@ extension SlotAllocatorTests {
         func send(_ name: String, _ sid: String, pid: Int32) {
             var e = HookEvent(name: name, sessionId: sid, cwd: "/p/x")
             e.agentlight = HookExtras(claudePid: pid)
-            _ = a.handle(e, config: config, now: now) { bg.contains($0) }
+            _ = a.handle(e, config: config, now: now, roles: .init(isHidden: { bg.contains($0) }))
         }
         send("SessionStart", "a", pid: 1)
         send("SessionStart", "fork", pid: 2)
         send("UserPromptSubmit", "fork", pid: 2)
-        XCTAssertTrue(a.isBackground("fork"))
+        XCTAssertTrue(a.isHidden("fork"))
 
-        // форк показывают во вкладке-хозяине — он больше не фоновый
+        // заготовке из agent view отдали задачу — теперь это обычная фоновая сессия
         alive = [1, 2]
         now += 1
-        let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }) { _ in false }
+        let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }, roles: .none)
         XCTAssertEqual(fx.welcome, [1])
         XCTAssertTrue(a.background.isEmpty)
         XCTAssertEqual(a.slotIndex(of: "fork"), 1)
         XCTAssertEqual(a.lights, [.idle, .busy, .off, .off])
+    }
+
+    func testDispatchedSpareShowsOnItsNextEvent() {
+        var hidden: Set<Int32> = [7]
+        func send(_ name: String) {
+            var e = HookEvent(name: name, sessionId: "spare", cwd: "/p/x")
+            e.agentlight = HookExtras(claudePid: 7)
+            _ = a.handle(e, config: config, now: now, roles: .init(isHidden: { hidden.contains($0) }))
+        }
+        send("SessionStart")
+        XCTAssertTrue(a.isHidden("spare"))
+        hidden = []  // в реестре пропал spare:true
+        send("UserPromptSubmit")
+        XCTAssertFalse(a.isHidden("spare"))
+        XCTAssertEqual(a.lights, [.busy, .off, .off, .off])
+    }
+
+    func testForkTakesOverSlotOfItsParkedTab() {
+        // вкладка 1 (слот 1) отправила сессию в фон: процесс 1 — оболочка, форк — pid 9
+        send("SessionStart", "x", pid: 5)
+        send("SessionStart", "tab", pid: 1)
+        send("SessionStart", "y", pid: 6)
+        let roles = SlotAllocator.Roles(isHidden: { $0 == 1 }, parkedShell: { $0 == 9 ? 1 : nil })
+        var e = HookEvent(name: "SessionStart", sessionId: "fork", cwd: "/p/x")
+        e.agentlight = HookExtras(claudePid: 9)
+        let fx = a.handle(e, config: config, now: now, roles: roles)
+        XCTAssertEqual(fx.welcome, [], "та же беседа продолжается — без welcome")
+        XCTAssertEqual(a.slotIndex(of: "fork"), 1)
+        XCTAssertTrue(a.isHidden("tab"))
+        XCTAssertEqual(a.slotIndex(of: "y"), 2)
+    }
+
+    func testSweepHandsParkedTabSlotToFork() {
+        // форк успел занять слот раньше, чем вкладка записала parkedJobId
+        send("SessionStart", "tab", pid: 1)
+        send("SessionStart", "x", pid: 5)
+        send("SessionStart", "fork", pid: 9)
+        send("UserPromptSubmit", "fork")
+        _ = a.handle(HookEvent(name: "SessionStart", sessionId: "z", cwd: "/p/x"), config: config, now: now)
+        _ = a.toggleMute(slot: 0)
+        alive = [1, 5, 9]
+        now += 1
+        let roles = SlotAllocator.Roles(isHidden: { $0 == 1 }, parkedShell: { $0 == 9 ? 1 : nil })
+        _ = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }, roles: roles)
+        XCTAssertEqual(a.slotIndex(of: "fork"), 0, "лампа вкладки досталась форку")
+        XCTAssertTrue(a.slots[0].muted, "заглушка вкладки сохранилась")
+        XCTAssertEqual(a.slotIndex(of: "x"), 1)
+        XCTAssertEqual(a.slotIndex(of: "z"), 2, "слоты сдвинулись без дырки")
+        XCTAssertEqual(a.lights, [.off, .idle, .idle, .off])
+        XCTAssertTrue(a.isHidden("tab"))
     }
 }

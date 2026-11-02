@@ -52,6 +52,10 @@ public enum TerminalFocus {
         "cd \(shellQuote(cwd)) && claude --resume \(shellQuote(sessionId))"
     }
 
+    public static func attachCommand(cwd: String?, job: String) -> String {
+        (cwd.map { "cd \(shellQuote($0)) && " } ?? "") + "claude attach \(shellQuote(job))"
+    }
+
     public static func shellQuote(_ s: String) -> String {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
