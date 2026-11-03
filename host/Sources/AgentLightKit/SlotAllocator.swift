@@ -1,14 +1,14 @@
 import Foundation
 
-/// Вся логика «какая сессия в каком слоте и что горит», без ввода-вывода.
-/// Правила — docs/01-architecture.md §1.3–1.5. Значение целиком сохраняется в state.json.
+/// All of the "which session is in which slot and what's lit" logic, with no I/O.
+/// Rules — docs/01-architecture.md §1.3–1.5. The whole value is saved to state.json.
 public struct SlotAllocator: Codable, Equatable, Sendable {
     public private(set) var slots: [Slot]
-    /// сессии без светофора, ждут освобождения слота
+    /// sessions without a traffic light, waiting for a slot to free up
     public private(set) var overflow: [SessionRecord]
-    /// скрытые сессии: запасная заготовка демона Claude Code и вкладка-оболочка, чья сессия
-    /// уехала в фон. Светофор им не положен, но события поглощаем, чтобы они не заехали
-    /// в слот через claim по первому же хуку. (Имя — из state.json прошлых версий.)
+    /// hidden sessions: the Claude Code daemon spare and shell tabs whose session moved
+    /// to the background. They get no traffic light, but their events are absorbed so they don't land
+    /// in a slot via claim on the very first hook. (The name comes from state.json of older versions.)
     public private(set) var background: [SessionRecord]
 
     public init(slotCount: Int = Config().slotCount) {
@@ -19,7 +19,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
 
     enum CodingKeys: String, CodingKey { case slots, overflow, background }
 
-    /// state.json старых версий — без `background`
+    /// state.json from older versions — without `background`
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         slots = try c.decode([Slot].self, forKey: .slots)
@@ -27,11 +27,11 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         background = try c.decodeIfPresent([SessionRecord].self, forKey: .background) ?? []
     }
 
-    /// Что известно о процессе claude сессии (`ClaudeSessions.roles()`; в тестах — подставное).
+    /// What's known about the session's claude process (`ClaudeSessions.roles()`; a stand-in in tests).
     public struct Roles {
-        /// сессии процесса светофор не положен
+        /// this process's session gets no traffic light
         public var isHidden: (Int32) -> Bool
-        /// для фоновой сессии — pid вкладки-оболочки, из которой её отправили в фон
+        /// for a background session — pid of the shell tab it was sent to the background from
         public var parkedShell: (Int32) -> Int32?
 
         public init(isHidden: @escaping (Int32) -> Bool = { _ in false },
@@ -43,7 +43,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         public static var none: Roles { Roles() }
     }
 
-    /// Что поменялось после события — для транспорта и UI.
+    /// What changed after an event — for the transport and the UI.
     public struct Effects: Equatable, Sendable {
         public var welcome: [Int] = []
         public var changed = false
@@ -64,7 +64,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         background.contains { $0.sessionId == sessionId }
     }
 
-    // MARK: - События
+    // MARK: - Events
 
     public mutating func handle(_ event: HookEvent, config: Config, now: Date,
                                 roles: Roles = .none) -> Effects {
@@ -78,7 +78,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             fx.merge(end(event, rebind: rebind, config: config, now: now))
         case .set(let state):
             if !touch(event, now: now) {
-                // демон стартовал позже агента или хуки поставлены посреди сессии
+                // the daemon started after the agent, or hooks were installed mid-session
                 fx.merge(claim(event, config: config, now: now, roles: roles))
             }
             update(event.sessionId) { $0.set(state, at: now) }
@@ -87,13 +87,13 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
                 fx.merge(claim(event, config: config, now: now, roles: roles))
             }
         }
-        // заготовка из agent view стала задачей: показать сразу, не ждать sweep
+        // an agent view spare became a job: show it right away, don't wait for sweep
         fx.merge(reveal(only: event.sessionId, roles: roles))
         fx.changed = fx.changed || lights != before.lights || self != before
         return fx
     }
 
-    /// Пользователь прервал ход по Esc (видно только по transcript): агент ждёт ввода → зелёный.
+    /// The user interrupted the turn with Esc (visible only in the transcript): the agent waits for input → green.
     public mutating func interrupted(_ sessionId: String, now: Date) -> Effects {
         let before = self
         update(sessionId) {
@@ -103,7 +103,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         return Effects(changed: self != before)
     }
 
-    /// Сессии с transcript-файлом — за ними следит демон.
+    /// Sessions with a transcript file — the daemon watches them.
     public var transcripts: [String: String] {
         var out: [String: String] = [:]
         for s in slots.compactMap(\.session) + overflow {
@@ -112,13 +112,13 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         return out
     }
 
-    /// Освободить слот, в котором сидит сессия (кнопка «забыть», CLI).
+    /// Free the slot the session sits in (the "forget" button, CLI).
     public mutating func release(slot: Int, now: Date) -> Effects {
         guard slots.indices.contains(slot), slots[slot].session != nil else { return Effects() }
         return free(slot, now: now)
     }
 
-    /// Дописать найденные задним числом pid и терминал сессии (для сессий без SessionStart).
+    /// Fill in a session's pid and terminal found after the fact (for sessions without SessionStart).
     public mutating func adopt(slot: Int, pid: Int32, tty: String?, cwd: String) {
         guard slots.indices.contains(slot), var s = slots[slot].session else { return }
         if s.claudePid == nil { s.claudePid = pid }
@@ -137,13 +137,13 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         return Effects(changed: true)
     }
 
-    /// Сменилось число светофоров (`slot_count`). Сессии из лишних слотов уходят
-    /// в overflow, новые слоты заполняются из overflow, как при освобождении.
+    /// The number of traffic lights (`slot_count`) changed. Sessions from extra slots go
+    /// to overflow, new slots are filled from overflow, like on release.
     public mutating func resize(to count: Int, now: Date) -> Effects {
         guard count != slots.count else { return Effects() }
         var fx = Effects(changed: true)
         if count < slots.count {
-            // слот в rebinding уже закончил сессию — переносить нечего
+            // a slot in rebinding has already ended its session — nothing to move
             overflow += slots[count...].filter { $0.rebinding == nil }.compactMap(\.session)
             slots.removeSubrange(count...)
             return fx
@@ -154,10 +154,10 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         return fx
     }
 
-    // MARK: - Периодическая проверка (раз в 5 с)
+    // MARK: - Periodic check (every 5 s)
 
-    /// Таймауты BUSY, TTL, окна rebinding, живость PID и фоновые сессии, попавшие в слоты
-    /// раньше (state.json прошлой версии, pid узнали позже первого события).
+    /// BUSY timeouts, TTL, rebinding windows, PID liveness, and background sessions that got into slots
+    /// earlier (state.json from an older version, pid learned after the first event).
     public mutating func sweep(config: Config, now: Date, isAlive: (Int32) -> Bool,
                                roles: Roles = .none) -> Effects {
         var fx = Effects()
@@ -173,7 +173,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         overflow.removeAll(where: hide)
         for i in overflow.indices { Self.degradeBusy(&overflow[i], config: config, now: now) }
 
-        // с конца: free(i) сдвигает влево только уже проверенные слоты
+        // from the end: free(i) only shifts already-checked slots to the left
         for i in slots.indices.reversed() {
             if let r = slots[i].rebinding, r.until <= now {
                 slots[i].rebinding = nil
@@ -186,12 +186,12 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
                 continue
             }
             if hide(s) {
-                // вкладку отправили в фон: её слот достаётся фоновой сессии, без прыжка лампы
+                // the tab was sent to the background: its slot goes to the background session, the lamp doesn't jump
                 if let j = slots.indices.first(where: { j in
                     j != i && slots[j].rebinding == nil &&
                         slots[j].session?.claudePid.flatMap(roles.parkedShell) == s.claudePid
                 }) {
-                    slots[i].session = slots[j].session  // заглушку вкладки сохраняем
+                    slots[i].session = slots[j].session  // keep the tab's mute
                     fx.merge(free(j, now: now))
                 } else {
                     fx.merge(free(i, now: now))
@@ -206,8 +206,8 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         return fx
     }
 
-    /// Скрытые сессии, которым светофор теперь положен: заготовке из agent view отдали задачу,
-    /// спрятанные прошлой версией (тогда любая сессия под bg-pty-host считалась безоконной).
+    /// Hidden sessions that now deserve a traffic light: an agent view spare was given a job,
+    /// or hidden by an older version (back then any session under bg-pty-host counted as windowless).
     private mutating func reveal(only id: String?, roles: Roles) -> Effects {
         let shown = background.filter { s in
             (id == nil || s.sessionId == id) && (s.claudePid.map { !roles.isHidden($0) } ?? false)
@@ -226,8 +226,8 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         return fx
     }
 
-    /// Мак проспал `interval`: время сна не считается молчанием агента — ни для TTL,
-    /// ни для таймаута BUSY.
+    /// The Mac slept for `interval`: sleep time doesn't count as agent silence — neither for TTL
+    /// nor for the BUSY timeout.
     public mutating func postpone(by interval: TimeInterval) {
         guard interval > 0 else { return }
         func shift(_ s: inout SessionRecord) {
@@ -238,10 +238,10 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         for i in overflow.indices { shift(&overflow[i]) }
     }
 
-    // MARK: - Внутреннее
+    // MARK: - Internals
 
-    /// Известен PID — решает только он: агент может молчать сколько угодно (ночь у открытой
-    /// крышки, сон ноута). TTL — страховка для сессий, чей процесс мы так и не нашли.
+    /// If the PID is known, only it decides: an agent may stay silent as long as it likes (a night with
+    /// the lid open, laptop sleep). TTL is a safety net for sessions whose process we never found.
     private static func isDead(_ s: SessionRecord, config: Config, now: Date, isAlive: (Int32) -> Bool) -> Bool {
         if let pid = s.claudePid { return !isAlive(pid) }
         return now.timeIntervalSince(s.lastEventAt) > config.sessionTTLSec
@@ -253,7 +253,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         }
     }
 
-    /// Обновить запись сессии, где бы она ни была. false — сессия неизвестна.
+    /// Update a session's record wherever it is. false — unknown session.
     @discardableResult
     private mutating func update(_ id: String, _ body: (inout SessionRecord) -> Void) -> Bool {
         if let i = slotIndex(of: id) {
@@ -278,19 +278,19 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
     /// claim(session_id, cwd, pid), docs/01-architecture.md §1.4.
     private mutating func claim(_ event: HookEvent, config: Config, now: Date,
                                 roles: Roles) -> Effects {
-        // 1. сессия уже известна
+        // 1. the session is already known
         if touch(event, now: now) { return Effects() }
 
         var record = SessionRecord(sessionId: event.sessionId, cwd: event.cwd, state: .idle, at: now)
         record.absorb(event, at: now)
 
-        // 2. заготовка демона или вкладка-оболочка (в т.ч. /clear внутри неё) — без светофора
+        // 2. daemon spare or shell tab (including /clear inside it) — no traffic light
         if let pid = record.claudePid, roles.isHidden(pid) {
             background.append(record)
             return Effects(changed: true)
         }
 
-        // 2a. сессию отправили в фон: форк занимает слот своей вкладки-оболочки, без welcome
+        // 2a. the session was sent to the background: the fork takes its shell tab's slot, no welcome
         if let shell = record.claudePid.flatMap(roles.parkedShell),
            let i = slots.indices.first(where: { slots[$0].rebinding == nil && slots[$0].session?.claudePid == shell }) {
             background.append(slots[i].session!)
@@ -298,7 +298,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             return Effects(changed: true)
         }
 
-        // 3. /clear, /resume: тот же терминал → тот же слот, без welcome
+        // 3. /clear, /resume: same terminal → same slot, no welcome
         if let i = rebindTarget(for: record, source: event.source, now: now) {
             if let old = slots[i].session, old.terminal != nil, record.terminal == nil {
                 record.terminal = old.terminal
@@ -308,7 +308,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             return Effects(changed: true)
         }
 
-        // 4. явная просьба (кнопка пустого слота), 5. пин, 6. первый свободный
+        // 4. explicit request (empty slot button), 5. pin, 6. first free one
         let preferred = [event.agentlight?.preferSlot, config.pinnedSlot(for: record.cwd)]
             .compactMap { $0 }
             .filter { slots.indices.contains($0) }
@@ -317,7 +317,7 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
             return Effects(welcome: [i], changed: true)
         }
 
-        // 7. мест нет — в overflow, без светофора
+        // 7. no room — to overflow, no traffic light
         overflow.append(record)
         return Effects(changed: true)
     }
@@ -333,8 +333,8 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         }) {
             return i
         }
-        // command-хук SessionStart может обогнать http-хук SessionEnd старой сессии:
-        // тогда старая ещё сидит в слоте — узнаём её по PID процесса claude
+        // the SessionStart command hook may overtake the old session's SessionEnd http hook:
+        // then the old one still sits in the slot — recognize it by the claude process PID
         guard source == "clear" || source == "resume", let pid = record.claudePid else { return nil }
         return slots.indices.first { slots[$0].session?.claudePid == pid }
     }
@@ -363,8 +363,8 @@ public struct SlotAllocator: Codable, Equatable, Sendable {
         slots[i].session = record
     }
 
-    /// Освободить слот, сдвинуть занятые слоты влево (без дырок между светофорами)
-    /// и пустить в первый свободный самую свежую сессию из overflow.
+    /// Free the slot, shift the occupied slots left (no gaps between traffic lights)
+    /// and let the most recent overflow session into the first free one.
     private mutating func free(_ i: Int, now: Date) -> Effects {
         slots[i] = Slot()
         let taken = slots.filter { !$0.isFree }

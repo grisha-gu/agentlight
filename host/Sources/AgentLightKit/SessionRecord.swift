@@ -8,7 +8,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     public var terminal: TerminalRef?
     public var state: LightState
     public var lastEventAt: Date
-    /// когда последний раз менялось состояние — для таймаута BUSY
+    /// when the state last changed — for the BUSY timeout
     public var stateSince: Date
 
     public init(sessionId: String, cwd: String?, state: LightState, at now: Date) {
@@ -19,7 +19,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
         self.stateSince = now
     }
 
-    /// Имя проекта для подписи под светофором.
+    /// Project name for the caption under the traffic light.
     public var projectName: String {
         guard let cwd, !cwd.isEmpty else { return "—" }
         return (cwd as NSString).lastPathComponent
@@ -27,7 +27,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
 
     mutating func absorb(_ event: HookEvent, at now: Date) {
         lastEventAt = now
-        // cwd в хуках — текущий каталог шелла агента, он гуляет по `cd`; проект — где агент запущен
+        // cwd in hooks is the agent shell's current directory, it wanders with `cd`; the project is where the agent was started
         if self.cwd == nil, let cwd = event.cwd { self.cwd = cwd }
         if let t = event.transcriptPath { transcriptPath = t }
         if let x = event.agentlight {
@@ -42,7 +42,7 @@ public struct SessionRecord: Codable, Equatable, Sendable {
     }
 }
 
-/// Слот держит сессию 15 с после `/clear`, чтобы новая сессия того же окна заехала в него же.
+/// A slot holds a session for 15 s after `/clear` so the new session of the same window lands in it.
 public struct Rebinding: Codable, Equatable, Sendable {
     public var cwd: String?
     public var claudePid: Int32?
@@ -52,7 +52,7 @@ public struct Rebinding: Codable, Equatable, Sendable {
 public struct Slot: Codable, Equatable, Sendable {
     public var session: SessionRecord?
     public var rebinding: Rebinding?
-    /// долгое нажатие: светофор погашен, пока не нажать долго ещё раз
+    /// long press: the traffic light stays dark until another long press
     public var muted = false
 
     public init() {}

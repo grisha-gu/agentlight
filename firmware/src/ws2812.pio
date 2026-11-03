@@ -1,4 +1,4 @@
-; WS2812 на одном пине, 800 кГц. По мотивам pico-examples/pio/ws2812 (BSD-3).
+; WS2812 on a single pin, 800 kHz. Based on pico-examples/pio/ws2812 (BSD-3).
 
 .program ws2812
 .side_set 1

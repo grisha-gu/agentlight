@@ -4,7 +4,7 @@ import XCTest
 
 final class ClaudeCensusTests: XCTestCase {
     let t0 = Date(timeIntervalSince1970: 1_800_000_000)
-    // все процессы стартовали до снимка, снимок — в t0
+    // all processes started before the snapshot, the snapshot is at t0
     lazy var before: (Int32) -> Date? = { [t0] _ in t0 - 100 }
 
     func entry(_ pid: Int32, kind: String? = "interactive", job: String? = nil, parked: String? = nil,
@@ -31,7 +31,7 @@ final class ClaudeCensusTests: XCTestCase {
         XCTAssertEqual(l?.items.keys.sorted(), [65945, 76609])
         XCTAssertEqual(l?.items[76609]?.id, "d662e5ff")
         XCTAssertEqual(ClaudeAgentsList.parse(Data("[]".utf8), takenAt: t0)?.items.count, 0)
-        XCTAssertNil(ClaudeAgentsList.parse(Data(#"{"sessions":[]}"#.utf8), takenAt: t0), "формат сменился")
+        XCTAssertNil(ClaudeAgentsList.parse(Data(#"{"sessions":[]}"#.utf8), takenAt: t0), "the format changed")
         XCTAssertNil(ClaudeAgentsList.parse(Data(#"[{"session":"x"}]"#.utf8), takenAt: t0))
     }
 
@@ -48,52 +48,52 @@ final class ClaudeCensusTests: XCTestCase {
     }
 
     func testRenamedFieldsAreCaughtByList() {
-        // Claude Code переименовал parkedJobId и spare: реестр видит всех как обычные сессии
+        // Claude Code renamed parkedJobId and spare: the registry sees everyone as regular sessions
         let r = registry(entry(1), entry(9, kind: "bg", job: "j9"), entry(5, kind: "bg", job: "j5"))
         let c = census(r, list(9))
-        XCTAssertTrue(c.isHidden(1), "оболочку прячет список")
-        XCTAssertTrue(c.isHidden(5), "заготовку прячет список")
-        XCTAssertNil(c.parkedShell(of: 9), "передача слота без реестра не работает — лампа займёт новый слот")
+        XCTAssertTrue(c.isHidden(1), "the list hides the shell")
+        XCTAssertTrue(c.isHidden(5), "the list hides the spare")
+        XCTAssertNil(c.parkedShell(of: 9), "slot handover doesn't work without the registry — the lamp takes a new slot")
         XCTAssertEqual(c.problems(among: [1, 5, 9]).count, 2)
-        XCTAssertTrue(c.problems(among: [1])[0].contains("не видит"))
+        XCTAssertTrue(c.problems(among: [1])[0].contains("doesn't see"))
     }
 
     func testListRevealsWhatRegistryWronglyHides() {
         let r = registry(entry(5, kind: "bg", job: "j5", spare: true))
         let c = census(r, list(5))
         XCTAssertFalse(c.isHidden(5))
-        XCTAssertTrue(c.problems(among: [5])[0].contains("видит"))
+        XCTAssertTrue(c.problems(among: [5])[0].contains("sees it"))
     }
 
     func testStaleSnapshotDefersToRegistry() {
-        // заготовке отдали задачу после снимка: файл переписан позже — снимок не в счёт
+        // the spare was given a job after the snapshot: the file was rewritten later — the snapshot doesn't count
         let r = registry(entry(5, kind: "bg", job: "j5", modified: t0 + 3))
         let c = census(r, list())
         XCTAssertFalse(c.isHidden(5))
         XCTAssertEqual(c.problems(among: [5]), [])
-        // процесс моложе снимка — тоже
+        // a process younger than the snapshot — same
         let young = ClaudeCensus(registry: registry(entry(6, kind: "bg", job: "j6", spare: true)), listed: list(6),
                                  arguments: { _ in nil }, startedAt: { [t0] _ in t0 + 1 })
         XCTAssertTrue(young.isHidden(6))
     }
 
     func testListNeverHidesProcessesItCannotVouchFor() {
-        // процесс без записи в реестре и не заготовка (чужой SDK, новый вид сессии) — не прячем
+        // a process with no registry entry that isn't a spare (a foreign SDK, a new kind of session) — don't hide
         let c = census(registry(entry(7)), list(7))
         XCTAssertFalse(c.isHidden(42))
-        // незанятая заготовка: файла нет, argv --bg-spare
+        // an unclaimed spare: no file, argv --bg-spare
         let spare = census(registry(entry(7)), list(7), argv: [43: ["claude", "--bg-spare", "/x.sock"]])
         XCTAssertTrue(spare.isHidden(43))
     }
 
     func testMissingRegistryDoesNotHideDispatchedSpares() {
-        // реестр пропал (другое место/формат), а задача из agent view живёт в процессе с --bg-spare:
-        // без сверки — показываем; со сверкой — список видит её
+        // the registry is gone (other location/format), and an agent view job lives in a --bg-spare process:
+        // without a cross-check — show; with one — the list sees it
         let argv: [Int32: [String]] = [43: ["claude", "--bg-spare", "/x.sock"]]
         XCTAssertFalse(census(ClaudeSessions(), nil, argv: argv).isHidden(43))
         let c = census(ClaudeSessions(), list(43, 7), argv: argv)
         XCTAssertFalse(c.isHidden(43))
-        XCTAssertTrue(c.problems(among: [43])[0].contains("нет 2 из 2"))
+        XCTAssertTrue(c.problems(among: [43])[0].contains("missing 2 of 2"))
     }
 
     func testNoSnapshotMeansRegistryOnly() {

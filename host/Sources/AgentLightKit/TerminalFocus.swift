@@ -1,18 +1,18 @@
 import CoreServices
 import Foundation
 
-/// Фокус терминала агента по кнопке, docs/05-host-macos.md §5.6.
-/// Здесь только решения и тексты скриптов; запуск процессов — в демоне (FocusRunner).
+/// Focusing the agent's terminal from a button, docs/05-host-macos.md §5.6.
+/// Only decisions and script texts here; process launching lives in the daemon (FocusRunner).
 public enum TerminalFocus {
-    /// Один шаг цепочки. Первый удачный выигрывает.
+    /// One step of the chain. The first successful one wins.
     public enum Step: Equatable, Sendable {
-        /// переключить окно/панель tmux; на выходе — tty клиента, по которому искать вкладку
+        /// switch tmux window/pane; outputs the client tty to look the tab up by
         case tmux(pane: String, socket: String?)
-        /// Terminal.app: вкладка по tty
+        /// Terminal.app: tab by tty
         case terminalTab(tty: String?)
-        /// терминал без скриптинга: просто вывести приложение вперёд
+        /// terminal without scripting: just bring the app to the front
         case activateApp(bundleId: String)
-        /// агент мёртв, а вкладки нет — открыть `claude --resume` в новом окне
+        /// the agent is dead and there's no tab — open `claude --resume` in a new window
         case resume(cwd: String, sessionId: String)
     }
 
@@ -33,7 +33,7 @@ public enum TerminalFocus {
                     steps.append(.activateApp(bundleId: app))
                 }
             case "new_window":
-                // живого агента не плодим вторым `--resume` — только если процесс точно умер
+                // don't spawn a second `--resume` of a live agent — only if the process is definitely dead
                 let dead = s.claudePid.map { !isAlive($0) } ?? false
                 if dead, let cwd = s.cwd { steps.append(.resume(cwd: cwd, sessionId: s.sessionId)) }
             default:
@@ -43,7 +43,7 @@ public enum TerminalFocus {
         return steps
     }
 
-    /// Новый агент из пустого слота: `SessionStart` прочитает AGENTLIGHT_PREFER_SLOT и займёт этот слот.
+    /// New agent from an empty slot: `SessionStart` reads AGENTLIGHT_PREFER_SLOT and takes this slot.
     public static func launchCommand(cwd: String, slot: Int) -> String {
         "cd \(shellQuote(cwd)) && AGENTLIGHT_PREFER_SLOT=\(slot) claude"
     }
@@ -60,9 +60,9 @@ public enum TerminalFocus {
         "'" + s.replacingOccurrences(of: "'", with: "'\\''") + "'"
     }
 
-    /// Нативные вкладки macOS Terminal отдаёт в AppleScript отдельными «окнами» с одной вкладкой
-    /// (проверено 2026-10-16: 2 физических окна → 5 windows). Поэтому перебираем все окна и все
-    /// вкладки, а поднимаем через `index` — это переключает и вкладку внутри группы.
+    /// macOS Terminal exposes native tabs to AppleScript as separate one-tab "windows"
+    /// (checked 2026-10-16: 2 physical windows → 5 windows). So we go through all windows and all
+    /// tabs, and raise via `index` — which also switches the tab within the group.
     public static let terminalTabScript = """
     on run argv
       set theTTY to item 1 of argv
@@ -83,7 +83,7 @@ public enum TerminalFocus {
     end run
     """
 
-    /// argv: команда для нового окна
+    /// argv: command for the new window
     public static let terminalRunScript = """
     on run argv
       tell application "Terminal"
@@ -94,13 +94,13 @@ public enum TerminalFocus {
     end run
     """
 
-    /// Разрешение Automation → Terminal у текущего процесса, без диалога TCC.
-    /// Смысл имеет только в демоне: CLI из терминала проверял бы права самого терминала.
+    /// Automation → Terminal permission of the current process, without a TCC dialog.
+    /// Only meaningful in the daemon: a CLI run from a terminal would check the terminal's own rights.
     public enum Automation: String, Codable, Sendable {
         case granted, denied
-        /// диалога ещё не было — появится при первом нажатии
+        /// no dialog yet — it will appear on the first press
         case notAsked
-        /// Terminal не запущен — TCC не отвечает про незапущенное приложение
+        /// Terminal isn't running — TCC doesn't answer about an app that isn't running
         case unknown
     }
 

@@ -55,7 +55,7 @@ final class DeviceLinkTests: XCTestCase {
         cdc.onAttach?(b)
         link.show(lights)
         XCTAssertEqual(a.lastSetAll, [.attn, .busy, .idle, .off])
-        // 7 слотов: у второго устройства последний светофор лишний
+        // 7 slots: the second device's last traffic light is unused
         XCTAssertEqual(b.lastSetAll, [.idle, .attn, .busy, .off])
         XCTAssertEqual(link.devices.map(\.bank), [0, 1])
 
@@ -83,7 +83,7 @@ final class DeviceLinkTests: XCTestCase {
         XCTAssertEqual(link.devices.first { $0.identity.uid == "C" }?.bank, 0)
     }
 
-    /// Одна железка видна и по HID, и по CDC — это одно устройство, говорим через HID.
+    /// One board is visible over both HID and CDC — it's one device, we talk via HID.
     func testSameDeviceOnTwoTransportsIsOneDevice() {
         let viaCDC = TestChannel("CDC", uid: "A"), viaHID = TestChannel("HID", uid: "A")
         cdc.onAttach?(viaCDC)
@@ -103,7 +103,7 @@ final class DeviceLinkTests: XCTestCase {
         XCTAssertEqual(link.devices.map(\.name), ["CDC"])
     }
 
-    /// Выключатель: прошивка гасит огни сама, хост только показывает «выключено» и ничего не шлёт.
+    /// Power switch: the firmware dims the lights itself, the host only shows "switched off" and sends nothing.
     func testPowerSwitchIsShownWithoutResync() {
         let a = TestChannel("HID", uid: "A")
         hid.onAttach?(a)
@@ -112,12 +112,12 @@ final class DeviceLinkTests: XCTestCase {
         a.onEvent?(.power(on: false))
         XCTAssertFalse(link.isActive)
         XCTAssertTrue(link.isConnected)
-        XCTAssertEqual(link.statusText, "HID: выключено")
+        XCTAssertEqual(link.statusText, "HID: switched off")
         XCTAssertTrue(a.sent.isEmpty)
 
         a.onEvent?(.power(on: true))
         XCTAssertTrue(link.isActive)
-        // READY после перезагрузки приносит положение заново
+        // READY after a reboot brings the position again
         a.onEvent?(.ready(DeviceIdentity(proto: 1, slots: 4, firmware: "1.0.0", uid: "A"), powerOn: false))
         XCTAssertFalse(link.devices[0].powerOn)
     }

@@ -11,17 +11,17 @@ enum { RED, YELLOW, GREEN };
 
 #define XFADE_MS       220
 #define WELCOME_MS     1200
-#define WAVE_STEP_MS   120     // сдвиг welcome между слотами при WELCOME ALL
+#define WAVE_STEP_MS   120     // welcome offset between slots for WELCOME ALL
 #define BUSY_PERIOD_MS 2200
 #define PULSE_LOW      0.65f
 
 typedef struct {
     slot_state_t target;
-    float        from[3];        // что было на экране в момент смены
-    float        shown[3];       // последний выведенный кадр
-    uint32_t     change_ms;      // начало crossfade
+    float        from[3];        // what was on screen at the moment of the change
+    float        shown[3];       // last frame output
+    uint32_t     change_ms;      // crossfade start
     bool         welcome;
-    uint32_t     welcome_ms;     // старт welcome (может быть в будущем — волна)
+    uint32_t     welcome_ms;     // welcome start (may be in the future — the wave)
 } slot_anim_t;
 
 static slot_anim_t slots[SLOTS];
@@ -71,7 +71,7 @@ static void start_change(slot_anim_t *s, slot_state_t st, uint32_t now) {
 void anim_set_state(uint8_t slot, slot_state_t st, uint32_t now) {
     if (slot >= SLOTS || slots[slot].target == st)
         return;
-    // Во время welcome цель просто меняется: welcome доиграет и crossfade'ом уйдёт в новую.
+    // During welcome the target simply changes: welcome finishes and crossfades into the new one.
     start_change(&slots[slot], st, now);
 }
 
@@ -97,7 +97,7 @@ void anim_set_config(bool busy, bool idle) {
     idle_pulse = idle;
 }
 
-// R fade-in → R→Y → Y→G → G hold → все три → затухание → crossfade в цель.
+// R fade-in → R→Y → Y→G → G hold → all three → fade out → crossfade to target.
 static bool welcome_frame(slot_anim_t *s, uint32_t now, float out[3]) {
     static const float R[3] = { 1, 0, 0 }, Y[3] = { 0, 1, 0 }, G[3] = { 0, 0, 1 }, ALL[3] = { 1, 1, 1 },
                        NONE[3] = { 0, 0, 0 };
@@ -136,8 +136,8 @@ void anim_tick(uint32_t now) {
                 memcpy(lv, to, sizeof lv);
         }
 
-        // Пульс входит плавно, за время crossfade: иначе частая смена цели (busy ↔ idle)
-        // включает и выключает его каждый кадр — это видно как мелкое мигание.
+        // The pulse fades in over the crossfade time: otherwise frequent target changes (busy ↔ idle)
+        // switch it on and off every frame, which shows up as fine flicker.
         uint32_t since = now - s->change_ms;
         float depth = since >= XFADE_MS ? 1 : (float)since / XFADE_MS;
         float wave = 0.5f * (1 + cosf(2 * (float)M_PI * (now % BUSY_PERIOD_MS) / BUSY_PERIOD_MS));
@@ -146,7 +146,7 @@ void anim_tick(uint32_t now) {
             lv[YELLOW] *= pulse;
         if (idle_pulse && s->target == ST_IDLE)
             lv[GREEN] *= pulse;
-        // shown — с пульсом: следующий crossfade стартует ровно с того, что горит, без скачка.
+        // shown includes the pulse: the next crossfade starts exactly from what's lit, no jump.
         memcpy(s->shown, lv, sizeof lv);
 
         for (int c = 0; c < 3; c++)

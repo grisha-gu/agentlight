@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
-"""Приёмка прошивки по CDC (docs/03-protocol.md §3.4, чеклист docs/04-firmware.md §4.9).
+"""Firmware acceptance over CDC (docs/03-protocol.md §3.4, checklist docs/04-firmware.md §4.9).
 
-  python3 tools/proto_test.py                 # автоматические проверки, ~20 с
-  python3 tools/proto_test.py --manual        # + пункты, которые проверяются глазами и руками
-  python3 tools/proto_test.py --pending       # только ручные, которые ещё не прошли
-  python3 tools/proto_test.py --only buttons  # отдельные проверки (через запятую)
-  python3 tools/proto_test.py --list          # все проверки и их последний результат
+  python3 tools/proto_test.py                 # automatic checks, ~20 s
+  python3 tools/proto_test.py --manual        # + checks done by eye and by hand
+  python3 tools/proto_test.py --pending       # only manual checks that haven't passed yet
+  python3 tools/proto_test.py --only buttons  # selected checks (comma-separated)
+  python3 tools/proto_test.py --list          # all checks and their latest result
 
-Последний результат каждой проверки пишется в tools/proto_test-results.json.
+The latest result of each check is written to tools/proto_test-results.json.
 
-Демон держит порт и ловит !BTN — его надо остановить. --stop-daemon делает это сам
-и запускает обратно на выходе. HID здесь не проверяется: его проверяет сам демон.
+The daemon holds the port and catches !BTN — it has to be stopped. --stop-daemon does that itself
+and starts it again on exit. HID isn't tested here: the daemon tests it itself.
 """
 import argparse, atexit, datetime, glob, json, os, queue, re, subprocess, sys, threading, time
 
@@ -18,13 +18,13 @@ import serial
 
 LABEL = "dev.grisha-gu.agentlight.daemon"
 PLIST = os.path.expanduser(f"~/Library/LaunchAgents/{LABEL}.plist")
-COLORS = ["красный", "жёлтый", "зелёный"]
+COLORS = ["red", "yellow", "green"]
 SLOTS = 4
 LEDS = 12
 WD_TIMEOUT = 3.0
 RESULTS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "proto_test-results.json")
 
-# power= — с fw 0.6.0 (выключатель на GP26)
+# power= — since fw 0.6.0 (power switch on GP26)
 IDENT = re.compile(r"agentlight proto=1 fw=(\d+\.\d+\.\d+) slots=4 uid=([0-9A-F]{16})(?: power=(on|off))?$")
 PONG = re.compile(r"OK PONG (\d+) uptime=(\d+) wd=([01])$")
 
@@ -43,8 +43,8 @@ def check(cond, msg):
 
 
 class Device:
-    """CDC-порт: ответы на команды (OK/ERR) и асинхронные события (!…) разносятся по очередям.
-    Heartbeat — отдельный поток, как у настоящего хоста; без него после первого PING всё гаснет."""
+    """CDC port: command replies (OK/ERR) and asynchronous events (!…) are sorted into queues.
+    Heartbeat is a separate thread, like in the real host; without it everything goes dark after the first PING."""
 
     def __init__(self, port):
         self.port = port
@@ -58,8 +58,8 @@ class Device:
         threading.Thread(target=self._beat, daemon=True).start()
 
     def open(self):
-        # Прошивка шлёт !READY по фронту DTR, а pyserial в open() чистит входной буфер —
-        # поэтому открываем с опущенным DTR и поднимаем, когда читатель уже работает.
+        # The firmware sends !READY on the DTR edge, and pyserial flushes the input buffer in open() —
+        # so open with DTR low and raise it once the reader is running.
         self.ser = serial.Serial(None, 115200, timeout=0.05)
         self.ser.port = self.port
         self.ser.dtr = False
@@ -71,8 +71,8 @@ class Device:
         self.ser.dtr = True
 
     def close(self):
-        # Сначала дождаться читателя: иначе он может проснуться на новом порту
-        # с тем же номером дескриптора и съесть !READY.
+        # Wait for the reader first: otherwise it may wake up on a new port
+        # with the same descriptor number and eat the !READY.
         with self.lock:
             if not self.ser:
                 return
@@ -114,11 +114,11 @@ class Device:
             try:
                 return self.resp.get(timeout=timeout)[1]
             except queue.Empty:
-                raise Fail(f"нет ответа на {line!r}")
+                raise Fail(f"no reply to {line!r}")
 
     def ok(self, line):
         r = self.cmd(line)
-        check(r == "OK", f"{line!r} → {r!r}, ждали OK")
+        check(r == "OK", f"{line!r} → {r!r}, expected OK")
 
     def ping(self):
         with self.lock:
@@ -154,13 +154,13 @@ class Device:
         return out
 
 
-# --- автоматические проверки -------------------------------------------------
+# --- automatic checks ------------------------------------------------------
 
 def t_hello(d):
     r = d.cmd("HELLO")
     m = IDENT.match(r[3:]) if r.startswith("OK ") else None
     check(m, f"HELLO → {r!r}")
-    check(d.cmd("hello") == r, "команды должны быть регистронезависимыми")
+    check(d.cmd("hello") == r, "commands must be case-insensitive")
     return f"fw={m.group(1)} uid={m.group(2)}" + (f" power={m.group(3)}" if m.group(3) else "")
 
 
@@ -184,9 +184,9 @@ def t_commands(d):
     d.ok("RAW ff 00 00 00 ff 00 00 00 ff 80 80 80")
     d.ok("RAW " + " ".join(["0"] * LEDS))
     d.ok("SELFTEST")
-    d.ok("SET 0 off")           # прерывает SELFTEST, возвращает состояния
+    d.ok("SET 0 off")           # interrupts SELFTEST, returns to states
     d.ok("SETALL off off off off")
-    d.ok("  SET\t1   idle  ")   # пробелы и табы между токенами
+    d.ok("  SET\t1   idle  ")   # spaces and tabs between tokens
     d.ok("SET 1 off")
 
 
@@ -216,7 +216,7 @@ BAD = [
     ("SET -1 idle", "bad args"),
     ("BRIGHT +5", "bad args"),
     ("CONFIG foo=1", "bad args"),
-    ("CONFIG attn_blink=1", "bad args"),   # мигание красного удалено совсем
+    ("CONFIG attn_blink=1", "bad args"),   # red blinking was removed entirely
     ("CONFIG busy_pulse=2", "bad args"),
     ("CONFIG busy_pulse", "bad args"),
     ("RAW " + " ".join(["0"] * 11), "bad args"),
@@ -231,34 +231,34 @@ BAD = [
 def t_errors(d):
     for line, err in BAD:
         r = d.cmd(line)
-        check(r == f"ERR {err}", f"{line!r} → {r!r}, ждали 'ERR {err}'")
-    # пустые строки (\n, \r\n) молча пропускаются; строка из пробелов — ERR unknown command
+        check(r == f"ERR {err}", f"{line!r} → {r!r}, expected 'ERR {err}'")
+    # empty lines (\n, \r\n) are skipped silently; a line of spaces — ERR unknown command
     r = d.cmd("   ")
-    check(r == "ERR unknown command", f"строка из пробелов → {r!r}")
+    check(r == "ERR unknown command", f"line of spaces → {r!r}")
     with d.lock:
         d.write("")
         d.write("\r")
         try:
             r = d.resp.get(timeout=0.3)[1]
-            raise Fail(f"на пустую строку пришёл ответ {r!r}")
+            raise Fail(f"an empty line got a reply {r!r}")
         except queue.Empty:
             pass
-    d.ok("SET 0 off")   # после ошибок парсер жив
-    return f"{len(BAD)} невалидных команд"
+    d.ok("SET 0 off")   # the parser is alive after errors
+    return f"{len(BAD)} invalid commands"
 
 
 def t_ping(d):
     up1, _ = d.ping()
     time.sleep(0.2)
     up2, _ = d.ping()
-    check(up2 > up1, f"uptime не растёт: {up1} → {up2}")
+    check(up2 > up1, f"uptime isn't growing: {up1} → {up2}")
     r = d.cmd("PING 4294967295")
     check(PONG.match(r) and r.startswith("OK PONG 4294967295 "), f"max seq → {r!r}")
     d.last_ping = time.monotonic()
 
 
 def t_stress(d, seconds=5.0, rate=200):
-    """SET 0 busy ↔ SET 0 idle 200 раз/с без ожидания ответов; PING внутри потока."""
+    """SET 0 busy ↔ SET 0 idle 200 times/s without waiting for replies; PING inside the stream."""
     n = int(seconds * rate)
     with d.lock:
         d.drain()
@@ -289,23 +289,23 @@ def t_stress(d, seconds=5.0, rate=200):
                 bad.append(line)
         d.last_ping = time.monotonic()
     wd = [l for _, l in list(d.events.queue) if l.startswith("!WD")]
-    check(not bad, f"лишние ответы: {bad[:3]}")
-    check(oks == n and pongs == pings, f"ответов OK {oks}/{n}, PONG {pongs}/{pings}")
-    check(not wd, "во время стресса сработал watchdog")
+    check(not bad, f"unexpected replies: {bad[:3]}")
+    check(oks == n and pongs == pings, f"OK replies {oks}/{n}, PONG {pongs}/{pings}")
+    check(not wd, "the watchdog tripped during the stress test")
     d.ok("SET 0 off")
-    return f"{n} команд за {sent_for:.1f} с ({n / sent_for:.0f}/с)"
+    return f"{n} commands in {sent_for:.1f} s ({n / sent_for:.0f}/s)"
 
 
 def t_reconnect(d):
-    """Закрыть и снова открыть порт (DTR) → !READY с той же идентификацией."""
+    """Close and reopen the port (DTR) → !READY with the same identification."""
     hello = d.cmd("HELLO")[3:]
     d.close()
     time.sleep(0.5)
     d.drain()
     d.open()
     ev = d.wait_event(r"!READY ", 2.0)
-    check(ev, "после переоткрытия порта нет !READY")
-    check(ev[1][len("!READY "):] == hello, f"!READY {ev[1]!r} не совпадает с HELLO {hello!r}")
+    check(ev, "no !READY after reopening the port")
+    check(ev[1][len("!READY "):] == hello, f"!READY {ev[1]!r} doesn't match HELLO {hello!r}")
 
 
 def t_watchdog(d):
@@ -313,51 +313,51 @@ def t_watchdog(d):
     d.ok("SETALL idle busy attn idle")
     d.ping()
     d.heartbeat.clear()
-    time.sleep(0.3)   # поток heartbeat мог уже решить слать PING
+    time.sleep(0.3)   # the heartbeat thread may have already decided to send a PING
     with d.lock:
         t0 = d.last_ping
     d.drain()
-    print(f"    heartbeat остановлен, ждём {WD_TIMEOUT:.0f} с + 3 с…", flush=True)
+    print(f"    heartbeat stopped, waiting {WD_TIMEOUT:.0f} s + 3 s…", flush=True)
     events = d.collect_events(WD_TIMEOUT + 3.0)
     trips = [t for t, l in events if l == "!WD trip"]
-    check(len(trips) == 1, f"!WD trip пришёл {len(trips)} раз, ждали ровно 1")
+    check(len(trips) == 1, f"!WD trip arrived {len(trips)} times, expected exactly 1")
     after = trips[0] - t0
-    check(WD_TIMEOUT - 0.1 <= after <= WD_TIMEOUT + 0.4, f"!WD trip через {after:.2f} с, ждали ~{WD_TIMEOUT:.0f} с")
+    check(WD_TIMEOUT - 0.1 <= after <= WD_TIMEOUT + 0.4, f"!WD trip after {after:.2f} s, expected ~{WD_TIMEOUT:.0f} s")
     _, wd = d.ping()
-    check(wd == 1, "первый PONG после срабатывания должен нести wd=1")
+    check(wd == 1, "the first PONG after a trip must carry wd=1")
     _, wd = d.ping()
-    check(wd == 0, "второй PONG должен нести wd=0")
+    check(wd == 0, "the second PONG must carry wd=0")
     d.heartbeat.set()
-    return f"!WD trip через {after:.2f} с, один раз"
+    return f"!WD trip after {after:.2f} s, once"
 
 
 AUTO = [
-    ("hello", "HELLO: версия и uid", t_hello),
-    ("commands", "все команды отвечают OK", t_commands),
-    ("errors", "невалидные аргументы → ERR", t_errors),
+    ("hello", "HELLO: version and uid", t_hello),
+    ("commands", "all commands answer OK", t_commands),
+    ("errors", "invalid arguments → ERR", t_errors),
     ("ping", "PING/PONG, uptime", t_ping),
-    ("stress", "200 переключений/с", t_stress),
-    ("reconnect", "переоткрытие порта → !READY", t_reconnect),
-    ("watchdog", "обрыв heartbeat → !WD trip", t_watchdog),
+    ("stress", "200 switches/s", t_stress),
+    ("reconnect", "port reopen → !READY", t_reconnect),
+    ("watchdog", "heartbeat loss → !WD trip", t_watchdog),
 ]
 
 
-# --- ручные проверки ---------------------------------------------------------
+# --- manual checks ---------------------------------------------------------
 
 def ask(question):
     while True:
         a = input(f"    {question} [y/n/s] ").strip().lower()
-        if a in ("y", "д", "да", "yes"):
+        if a in ("y", "yes"):
             return
-        if a in ("n", "н", "нет", "no"):
-            note = input("    что не так? ").strip()
-            raise Fail(note or "не прошло на глаз")
+        if a in ("n", "no"):
+            note = input("    what's wrong? ").strip()
+            raise Fail(note or "failed by eye")
         if a in ("s", "skip"):
-            raise Skip("пропущено")
+            raise Skip("skipped")
 
 
 def led_name(i):
-    return f"слот {i // 3} {COLORS[i % 3]}"
+    return f"slot {i // 3} {COLORS[i % 3]}"
 
 
 def raw_one(i, level):
@@ -367,33 +367,33 @@ def raw_one(i, level):
 
 
 def m_raw_order(d):
-    print("    зажигаю по одному, по 1 с; слот 0 — левый, сверху вниз красный/жёлтый/зелёный")
+    print("    lighting one at a time, 1 s each; slot 0 is the leftmost, top to bottom red/yellow/green")
     for i in range(LEDS):
         print(f"      GP{i:<2} {led_name(i)}", flush=True)
         d.ok(raw_one(i, 0xFF))
         time.sleep(1.0)
     d.ok("SETALL off off off off")
-    ask("каждый раз горел ровно тот светодиод, что напечатан?")
+    ask("was exactly the printed LED lit each time?")
 
 
 def m_fade(d):
-    """Плавность проверяем на анимациях: они считаются во float до самого PWM.
-    RAW для этого не годится — его вход 8 бит до гаммы, и внизу соседние уровни
-    отличаются по яркости в разы (5 → 4 — это −40 %), ступени там неизбежны."""
+    """Smoothness is checked on animations: they're computed in float all the way to PWM.
+    RAW won't do — its input is 8 bits before gamma, and at the bottom neighboring levels
+    differ in brightness several-fold (5 → 4 is −40 %), so steps there are unavoidable."""
     d.ok("CONFIG busy_pulse=1")
     fails = []
     for bright in (255, 30):
-        print(f"    пульс busy на всех слотах, BRIGHT {bright}, 3 периода (6.6 с)", flush=True)
+        print(f"    busy pulse on all slots, BRIGHT {bright}, 3 periods (6.6 s)", flush=True)
         d.ok(f"BRIGHT {bright}")
         d.ok("SETALL busy busy busy busy")
         time.sleep(6.6)
         d.ok("SETALL off off off off")
         time.sleep(0.5)
         try:
-            ask(f"пульс на BRIGHT {bright} плавный, без рывков и ступенек?")
+            ask(f"is the pulse at BRIGHT {bright} smooth, no jerks or steps?")
         except Fail as e:
-            fails.append(f"пульс {bright}: {e}")
-    print("    BRIGHT 30: зелёный загорается и гаснет (crossfade 220 мс), 3 раза", flush=True)
+            fails.append(f"pulse {bright}: {e}")
+    print("    BRIGHT 30: green fades in and out (220 ms crossfade), 3 times", flush=True)
     for _ in range(3):
         d.ok("SETALL idle idle idle idle")
         time.sleep(1.0)
@@ -401,7 +401,7 @@ def m_fade(d):
         time.sleep(1.0)
     d.ok("BRIGHT 255")
     try:
-        ask("загорается и гаснет плавно, без скачка в самом конце?")
+        ask("does it fade in and out smoothly, no jump at the very end?")
     except Fail as e:
         fails.append(f"crossfade: {e}")
     if fails:
@@ -409,76 +409,76 @@ def m_fade(d):
 
 
 def m_camera(d):
-    print("    включи камеру телефона на светофоры: 8 с busy pulse + 100 % RAW")
+    print("    point your phone camera at the traffic lights: 8 s busy pulse + 100 % RAW")
     d.ok("CONFIG busy_pulse=1")
     d.ok("SETALL busy busy busy busy")
     time.sleep(4)
     d.ok("RAW " + " ".join(["ff"] * LEDS))
     time.sleep(4)
     d.ok("SETALL off off off off")
-    ask("на экране телефона нет полос и мерцания?")
+    ask("no bands or flicker on the phone screen?")
 
 
 def m_stress(d):
-    print("    смотри на слот 0: через 2 с — 5 с SET busy ↔ idle 200 раз/с, потом OFF")
+    print("    watch slot 0: in 2 s — 5 s of SET busy ↔ idle 200 times/s, then OFF")
     time.sleep(2)
-    print("      старт", flush=True)
+    print("      start", flush=True)
     note = t_stress(d)
-    print(f"      конец — {note}")
-    ask("слот 0 не дёргался, не моргал, не было вспышек (если были — когда и на каком слоте)?")
+    print(f"      end — {note}")
+    ask("slot 0 didn't twitch, blink or flash (if it did — when and on which slot)?")
 
 
 def m_welcome(d):
-    print("    1) WELCOME ALL, через 0.5 с SETALL busy idle attn idle")
+    print("    1) WELCOME ALL, after 0.5 s SETALL busy idle attn idle")
     d.ok("SETALL off off off off")
     time.sleep(0.5)
     d.ok("WELCOME ALL")
     time.sleep(0.5)
     d.ok("SETALL busy idle attn idle")
     time.sleep(3)
-    print("    2) WELCOME 0, через 0.3 с SET 0 attn")
+    print("    2) WELCOME 0, after 0.3 s SET 0 attn")
     d.ok("WELCOME 0")
     time.sleep(0.3)
     d.ok("SET 0 attn")
     time.sleep(3)
-    ask("анимация не ломалась, в конце: 1) жёлтый зелёный красный зелёный, 2) слот 0 красный?")
+    ask("the animation didn't break, at the end: 1) yellow green red green, 2) slot 0 red?")
     d.ok("SETALL off off off off")
 
 
 def m_idempotent(d):
-    """Если бы повторный SET перезапускал crossfade, зелёный застрял бы тусклым у нуля."""
-    print("    слот 0: SET idle каждые 50 мс в течение 3 с")
+    """If a repeated SET restarted the crossfade, green would get stuck dim near zero."""
+    print("    slot 0: SET idle every 50 ms for 3 s")
     d.ok("SET 0 off")
     time.sleep(0.5)
     for _ in range(60):
         d.ok("SET 0 idle")
         time.sleep(0.05)
     d.ok("SET 0 off")
-    ask("зелёный за доли секунды плавно разгорелся до полной яркости и дальше горел ровно?")
+    ask("did green smoothly reach full brightness within a fraction of a second and then stay steady?")
 
 
 def m_buttons(d):
     for slot in range(SLOTS):
         d.drain()
-        print(f"    нажми кнопку слота {slot} (слева {slot + 1}-ю)", flush=True)
+        print(f"    press the slot {slot} button ({slot + 1} from the left)", flush=True)
         ev = d.wait_event(r"!BTN ", 20.0)
         if not ev:
-            raise Fail(f"кнопка {slot}: событий нет за 20 с")
-        check(re.match(rf"!BTN {slot} press t=\d+$", ev[1]), f"ждали !BTN {slot} press, пришло {ev[1]!r}")
+            raise Fail(f"button {slot}: no events in 20 s")
+        check(re.match(rf"!BTN {slot} press t=\d+$", ev[1]), f"expected !BTN {slot} press, got {ev[1]!r}")
         extra = [l for _, l in d.collect_events(1.0) if l.startswith("!BTN")]
-        check(not extra, f"кнопка {slot}: дребезг, лишние {extra}")
+        check(not extra, f"button {slot}: bounce, extra {extra}")
         print(f"      {ev[1]}")
     d.drain()
-    input("    теперь 10 с стучи по столу и по корпусу, кнопки не трогай. Enter — начать ")
+    input("    now knock on the table and the case for 10 s, don't touch the buttons. Enter to start ")
     extra = [l for _, l in d.collect_events(10.0) if l.startswith("!BTN")]
-    check(not extra, f"ложные срабатывания: {extra}")
-    return "4 кнопки, ложных нет"
+    check(not extra, f"false triggers: {extra}")
+    return "4 buttons, no false triggers"
 
 
 def m_replug(d):
     d.heartbeat.clear()
     d.ok("SETALL idle busy attn idle")
-    input("    сейчас горят светофоры. Выдерни USB, вставь обратно и нажми Enter ")
+    input("    the traffic lights are on. Unplug USB, plug it back in and press Enter ")
     d.close()
     d.drain()
     for _ in range(40):
@@ -488,11 +488,11 @@ def m_replug(d):
         except serial.SerialException:
             time.sleep(0.25)
     else:
-        raise Fail("порт не появился после переподключения")
+        raise Fail("the port didn't come back after reconnecting")
     ev = d.wait_event(r"!READY ", 3.0)
-    check(ev, "нет !READY после переподключения")
+    check(ev, "no !READY after reconnecting")
     print(f"      {ev[1]}")
-    ask("все светофоры погашены (команд ещё не было)?")
+    ask("are all traffic lights off (no commands yet)?")
     d.heartbeat.set()
 
 
@@ -501,79 +501,79 @@ def m_power(d):
         m = IDENT.match(d.cmd("HELLO")[3:])
         return m and m.group(3)
 
-    check(hello_power() == "on", "до проверки HELLO должен говорить power=on — GP26 ни к чему не подключён?")
+    check(hello_power() == "on", "before the check HELLO must say power=on — is GP26 connected to anything?")
     d.ok("SETALL idle busy attn idle")
     d.drain()
-    print("    горят 4 огня, по одному на светофор: зелёный, жёлтый, красный, зелёный.", flush=True)
-    print("    Замкни GP26 на GND проводом", flush=True)
+    print("    4 lights are on, one per traffic light: green, yellow, red, green.", flush=True)
+    print("    Short GP26 to GND with a wire", flush=True)
     ev = d.wait_event(r"!POWER ", 30.0)
-    check(ev and ev[1] == "!POWER off", f"ждали !POWER off, пришло {ev and ev[1]!r}")
+    check(ev and ev[1] == "!POWER off", f"expected !POWER off, got {ev and ev[1]!r}")
     extra = [l for _, l in d.collect_events(1.0) if l.startswith("!POWER")]
-    check(not extra, f"дребезг выключателя: лишние {extra}")
-    check(hello_power() == "off", "HELLO в «выкл» должен говорить power=off")
-    ask("все 4 огня плавно погасли, встроенный RGB на модуле тоже не горит?")
+    check(not extra, f"power switch bounce: extra {extra}")
+    check(hello_power() == "off", "HELLO while \"off\" must say power=off")
+    ask("did all 4 lights fade out smoothly, and the onboard RGB on the module is off too?")
 
     d.drain()
-    input("    нажми пару кнопок слотов (событий быть не должно), потом Enter ")
+    input("    press a couple of slot buttons (there must be no events), then Enter ")
     btn = [l for _, l in d.collect_events(0.2) if l.startswith("!BTN")]
-    check(not btn, f"в «выкл» кнопки молчат, а пришло {btn}")
-    d.ok("SET 0 attn")   # состояние, присланное в «выкл», должно показаться при «вкл»
+    check(not btn, f"buttons must be silent while \"off\", but got {btn}")
+    d.ok("SET 0 attn")   # a state sent while "off" must show up when "on"
 
-    print("    убери провод с GP26", flush=True)
+    print("    remove the wire from GP26", flush=True)
     ev = d.wait_event(r"!POWER ", 30.0)
-    check(ev and ev[1] == "!POWER on", f"ждали !POWER on, пришло {ev and ev[1]!r}")
-    check(hello_power() == "on", "HELLO после «вкл» должен говорить power=on")
-    ask("огни плавно разгорелись: красный, жёлтый, красный, зелёный (слот 0 стал красным в «выкл»)?")
+    check(ev and ev[1] == "!POWER on", f"expected !POWER on, got {ev and ev[1]!r}")
+    check(hello_power() == "on", "HELLO after \"on\" must say power=on")
+    ask("did the lights fade back in: red, yellow, red, green (slot 0 turned red while \"off\")?")
     d.ok("SETALL off off off off")
-    return "выкл/вкл, кнопки молчат"
+    return "off/on, buttons silent"
 
 
 def m_current(d):
-    print("    все 12 на полную (RAW ff ×12) — SELFTEST одновременно горит максимум 4,")
-    print("    поэтому максимальный ток меряем так. Мультиметр в разрыв 5 В USB (USB-тестер тоже годится).")
+    print("    all 12 at full (RAW ff ×12) — SELFTEST lights at most 4 at once,")
+    print("    so this is how max current is measured. Multimeter in series with USB 5 V (a USB tester works too).")
     d.ok("RAW " + " ".join(["ff"] * LEDS))
     try:
-        v = input("    ток в мА (Enter — пропустить): ").strip()
+        v = input("    current in mA (Enter to skip): ").strip()
     finally:
         d.ok("SETALL off off off off")
     if not v:
-        raise Skip("не мерили")
+        raise Skip("not measured")
     ma = float(v.replace(",", "."))
-    check(ma < 120, f"{ma:g} мА ≥ 120 мА")
-    return f"{ma:g} мА"
+    check(ma < 120, f"{ma:g} mA ≥ 120 mA")
+    return f"{ma:g} mA"
 
 
 def m_heat(d):
-    print("    все 12 на полную 60 с, потом потрогай модуль и транзисторы")
+    print("    all 12 at full for 60 s, then touch the module and the transistors")
     d.ok("RAW " + " ".join(["ff"] * LEDS))
     for left in range(60, 0, -10):
-        print(f"      {left} с…", flush=True)
+        print(f"      {left} s…", flush=True)
         time.sleep(10)
     d.ok("SETALL off off off off")
-    ask("ничего не горячее, модуль RP2040 максимум тёплый?")
+    ask("nothing is hot, the RP2040 module is warm at most?")
 
 
 MANUAL = [
-    ("raw-order", "12 LED по одному в нужном порядке", m_raw_order),
-    ("fade", "пульс и crossfade без ступеней", m_fade),
-    ("camera", "нет полос на камеру телефона", m_camera),
-    ("stress-visual", "200 переключений/с без артефактов", m_stress),
-    ("welcome", "welcome переживает новое состояние", m_welcome),
-    ("idempotent", "повторный SET не перезапускает анимацию", m_idempotent),
-    ("buttons", "4 кнопки, без ложных срабатываний", m_buttons),
-    ("replug", "переподключение USB → !READY, всё погашено", m_replug),
-    ("power", "выключатель GP26: гаснет, кнопки молчат, вкл — актуальная картина", m_power),
-    ("current", "ток все 12 на полную < 120 мА", m_current),
-    ("heat", "ничего не греется", m_heat),
+    ("raw-order", "12 LEDs one at a time in the right order", m_raw_order),
+    ("fade", "pulse and crossfade without steps", m_fade),
+    ("camera", "no bands on a phone camera", m_camera),
+    ("stress-visual", "200 switches/s without artifacts", m_stress),
+    ("welcome", "welcome survives a new state", m_welcome),
+    ("idempotent", "a repeated SET doesn't restart the animation", m_idempotent),
+    ("buttons", "4 buttons, no false triggers", m_buttons),
+    ("replug", "USB reconnect → !READY, everything off", m_replug),
+    ("power", "GP26 power switch: goes dark, buttons silent, on — current picture", m_power),
+    ("current", "current, all 12 at full < 120 mA", m_current),
+    ("heat", "nothing heats up", m_heat),
 ]
 
 
-# --- запуск ------------------------------------------------------------------
+# --- run ---------------------------------------------------------------------
 
 def find_port():
     ports = sorted(glob.glob("/dev/cu.usbmodem*"))
     if not ports:
-        sys.exit("порт /dev/cu.usbmodem* не найден — плата подключена?")
+        sys.exit("port /dev/cu.usbmodem* not found — is the board connected?")
     return ports[0]
 
 
@@ -584,7 +584,7 @@ def daemon_running():
 
 def stop_daemon():
     subprocess.run(["launchctl", "bootout", f"gui/{os.getuid()}/{LABEL}"], check=True)
-    atexit.register(lambda: (print("демон запускается обратно"),
+    atexit.register(lambda: (print("starting the daemon again"),
                              subprocess.run(["launchctl", "bootstrap", f"gui/{os.getuid()}", PLIST])))
     time.sleep(1.0)
 
@@ -609,10 +609,10 @@ def save_results(saved, results, fw):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port")
-    ap.add_argument("--manual", action="store_true", help="добавить ручные проверки")
-    ap.add_argument("--pending", action="store_true", help="только ручные проверки, которые ещё не прошли")
-    ap.add_argument("--only", help="имена проверок через запятую")
-    ap.add_argument("--stop-daemon", action="store_true", help="остановить демон на время теста")
+    ap.add_argument("--manual", action="store_true", help="add manual checks")
+    ap.add_argument("--pending", action="store_true", help="only manual checks that haven't passed yet")
+    ap.add_argument("--only", help="comma-separated check names")
+    ap.add_argument("--stop-daemon", action="store_true", help="stop the daemon for the duration of the test")
     ap.add_argument("--list", action="store_true")
     args = ap.parse_args()
 
@@ -621,8 +621,8 @@ def main():
     if args.list:
         for name, title, _ in AUTO + MANUAL:
             r = saved.get(name)
-            last = f"{r['status']} fw={r['fw']} {r['date']}" if r else "не запускалась"
-            kind = "ручная" if (name, title, _) in MANUAL else "авто"
+            last = f"{r['status']} fw={r['fw']} {r['date']}" if r else "never run"
+            kind = "manual" if (name, title, _) in MANUAL else "auto"
             print(f"  {name:<14} {kind:<6} {last:<28} {title}")
         return
 
@@ -630,20 +630,20 @@ def main():
     if args.pending:
         tests = [t for t in MANUAL if saved.get(t[0], {}).get("status") != "ok"]
         if not tests:
-            print("все ручные проверки пройдены")
+            print("all manual checks passed")
             return
     if args.only:
         want = args.only.split(",")
         known = {n: (n, t, f) for n, t, f in AUTO + MANUAL}
         bad = [w for w in want if w not in known]
         if bad:
-            sys.exit(f"нет таких проверок: {', '.join(bad)} (см. --list)")
+            sys.exit(f"no such checks: {', '.join(bad)} (see --list)")
         tests = [known[w] for w in want]
 
     if daemon_running():
         if not args.stop_daemon:
-            sys.exit("демон agentlightd держит порт — добавь --stop-daemon "
-                     "(или launchctl bootout gui/$UID/dev.grisha-gu.agentlight.daemon)")
+            sys.exit("the agentlightd daemon holds the port — add --stop-daemon "
+                     "(or launchctl bootout gui/$UID/dev.grisha-gu.agentlight.daemon)")
         stop_daemon()
 
     d = Device(args.port or find_port())
@@ -655,7 +655,7 @@ def main():
     d.ok("CONFIG busy_pulse=1 idle_pulse=0")
     d.heartbeat.set()
     fw = IDENT.match(d.cmd("HELLO")[3:]).group(1)
-    print(f"порт {d.port}, fw {fw}\n")
+    print(f"port {d.port}, fw {fw}\n")
 
     results = []
     for name, title, fn in tests:
@@ -680,11 +680,11 @@ def main():
     d.close()
     save_results(saved, results, fw)
 
-    print("\nитог:")
+    print("\nsummary:")
     for name, status, note in results:
         print(f"  {status:<5} {name:<14} {note}")
     failed = sum(1 for _, s, _ in results if s == "FAIL")
-    print(f"\n{len(results) - failed}/{len(results)} без ошибок")
+    print(f"\n{len(results) - failed}/{len(results)} passed")
     sys.exit(1 if failed else 0)
 
 

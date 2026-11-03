@@ -48,14 +48,14 @@ final class SlotAllocatorTests: XCTestCase {
         XCTAssertEqual(a.lights[0], .busy)
         send("Stop", "a")
         send("Notification", "a", notification: "idle_prompt")
-        XCTAssertEqual(a.lights[0], .idle, "idle_prompt не должен красить в красный")
+        XCTAssertEqual(a.lights[0], .idle, "idle_prompt must not turn it red")
     }
 
     func testCapturedTrafficEndsBusy() throws {
         for body in try captureSamples() {
             _ = a.handle(try HookEvent.decode(body), config: config, now: now)
         }
-        // последний образец — PreToolUse; сессия без SessionStart всё равно заехала в слот 0
+        // the last sample is PreToolUse; a session without SessionStart still landed in slot 0
         XCTAssertEqual(a.lights, [.busy, .off, .off, .off])
         XCTAssertEqual(a.slots[0].session?.projectName, "agent-indicator")
     }
@@ -77,13 +77,13 @@ final class SlotAllocatorTests: XCTestCase {
         now += 1
         send("SessionStart", "f")
         now += 1
-        send("PreToolUse", "e")  // e свежее f
+        send("PreToolUse", "e")  // e is fresher than f
         XCTAssertEqual(a.overflow.map(\.sessionId), ["e", "f"])
 
         let fx = send("SessionEnd", "b", reason: "other")
         XCTAssertEqual(fx.welcome, [3])
         XCTAssertEqual(a.slots.map { $0.session?.sessionId }, ["a", "c", "d", "e"])
-        XCTAssertEqual(a.lights[3], .busy, "из overflow приезжает с актуальным состоянием")
+        XCTAssertEqual(a.lights[3], .busy, "arrives from overflow with its current state")
         XCTAssertEqual(a.overflow.map(\.sessionId), ["f"])
     }
 
@@ -91,7 +91,7 @@ final class SlotAllocatorTests: XCTestCase {
         send("SessionStart", "a")
         send("SessionStart", "b", cwd: "/p/y", pid: 200)
         send("SessionEnd", "b", reason: "clear")
-        XCTAssertEqual(a.lights[1], .idle, "во время rebinding светофор не гаснет")
+        XCTAssertEqual(a.lights[1], .idle, "the traffic light doesn't go dark during rebinding")
         let fx = send("SessionStart", "b2", cwd: "/p/y", pid: 200, source: "clear")
         XCTAssertEqual(fx.welcome, [])
         XCTAssertEqual(a.slots[1].session?.sessionId, "b2")
@@ -123,7 +123,7 @@ final class SlotAllocatorTests: XCTestCase {
         XCTAssertNotNil(a.slots[3].session)
         send("SessionStart", "b", prefer: 2)
         XCTAssertNotNil(a.slots[2].session)
-        send("SessionStart", "c", cwd: "/p/pinned")  // пин занят → первый свободный
+        send("SessionStart", "c", cwd: "/p/pinned")  // pin taken → first free one
         XCTAssertEqual(a.slotIndex(of: "c"), 0)
     }
 
@@ -141,7 +141,7 @@ final class SlotAllocatorTests: XCTestCase {
         send("UserPromptSubmit", "c")
         send("SessionEnd", "b", reason: "prompt_input_exit")
         XCTAssertEqual(a.slots.map { $0.session?.sessionId }, ["a", "c", nil, nil])
-        XCTAssertEqual(a.lights, [.idle, .busy, .off, .off], "сдвинутый слот хранит состояние")
+        XCTAssertEqual(a.lights, [.idle, .busy, .off, .off], "a shifted slot keeps its state")
         XCTAssertEqual(send("SessionStart", "d").welcome, [2])
     }
 
@@ -190,14 +190,14 @@ final class SlotAllocatorTests: XCTestCase {
         alive = [7]
         send("SessionStart", "a", pid: 7)
         _ = sweep(after: 10 * 3600)
-        XCTAssertEqual(a.lights[0], .idle, "агент жив — молчание не повод гасить")
+        XCTAssertEqual(a.lights[0], .idle, "the agent is alive — silence is no reason to go dark")
         alive = []
         _ = sweep(after: 5)
         XCTAssertEqual(a.lights[0], .off)
     }
 
     func testSleepDoesNotCountTowardsTTL() {
-        send("SessionStart", "a")  // без pid — живость только по TTL
+        send("SessionStart", "a")  // no pid — liveness by TTL only
         now += 9 * 3600
         a.postpone(by: 9 * 3600)
         _ = sweep(after: 5)
@@ -233,7 +233,7 @@ extension SlotAllocatorTests {
 }
 
 extension SlotAllocatorTests {
-    /// 2026-10-16: away_summary через 3 мин после Stop покрасил простаивающий слот в жёлтый.
+    /// 2026-10-16: away_summary 3 min after Stop turned an idle slot yellow.
     func testBackgroundForksDoNotWakeIdleSlot() {
         send("SessionStart", "a")
         send("UserPromptSubmit", "a")
@@ -258,7 +258,7 @@ extension SlotAllocatorTests {
         XCTAssertEqual(a.overflow.map(\.sessionId), ["g"])
     }
 
-    /// Лишние сессии ждут в overflow.
+    /// Extra sessions wait in overflow.
     func testShrinkMovesExtraSessionsToOverflow() {
         a = SlotAllocator(slotCount: 6)
         for id in ["a", "b", "c", "d", "e", "f"] { send("SessionStart", id) }
@@ -286,7 +286,7 @@ extension SlotAllocatorTests {
         XCTAssertEqual(a.slotIndex(of: "a"), 0)
     }
 
-    // MARK: - Скрытые сессии (заготовка bg-spare, вкладка-оболочка)
+    // MARK: - Hidden sessions (bg-spare, shell tab)
 
     func testBackgroundSessionGetsNoSlot() {
         let bg: Set<Int32> = [77]
@@ -319,12 +319,12 @@ extension SlotAllocatorTests {
         now += 1
         let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }, roles: .init(isHidden: { $0 == 2 }))
         XCTAssertTrue(fx.changed)
-        XCTAssertEqual(a.slotIndex(of: "c"), 1, "слоты сдвинулись без дырки")
+        XCTAssertEqual(a.slotIndex(of: "c"), 1, "slots shifted without a gap")
         XCTAssertTrue(a.isHidden("spare"))
 
         alive = [1, 3]
         _ = sweep(after: 5)
-        XCTAssertTrue(a.background.isEmpty, "умерший фоновый процесс забыт")
+        XCTAssertTrue(a.background.isEmpty, "a dead background process is forgotten")
     }
 
     func testOldStateJSONWithoutBackgroundDecodes() throws {
@@ -349,7 +349,7 @@ extension SlotAllocatorTests {
         send("UserPromptSubmit", "fork", pid: 2)
         XCTAssertTrue(a.isHidden("fork"))
 
-        // заготовке из agent view отдали задачу — теперь это обычная фоновая сессия
+        // an agent view spare was given a job — now it's a regular background session
         alive = [1, 2]
         now += 1
         let fx = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }, roles: .none)
@@ -368,14 +368,14 @@ extension SlotAllocatorTests {
         }
         send("SessionStart")
         XCTAssertTrue(a.isHidden("spare"))
-        hidden = []  // в реестре пропал spare:true
+        hidden = []  // spare:true disappeared from the registry
         send("UserPromptSubmit")
         XCTAssertFalse(a.isHidden("spare"))
         XCTAssertEqual(a.lights, [.busy, .off, .off, .off])
     }
 
     func testForkTakesOverSlotOfItsParkedTab() {
-        // вкладка 1 (слот 1) отправила сессию в фон: процесс 1 — оболочка, форк — pid 9
+        // tab 1 (slot 1) sent its session to the background: process 1 is the shell, the fork is pid 9
         send("SessionStart", "x", pid: 5)
         send("SessionStart", "tab", pid: 1)
         send("SessionStart", "y", pid: 6)
@@ -383,14 +383,14 @@ extension SlotAllocatorTests {
         var e = HookEvent(name: "SessionStart", sessionId: "fork", cwd: "/p/x")
         e.agentlight = HookExtras(claudePid: 9)
         let fx = a.handle(e, config: config, now: now, roles: roles)
-        XCTAssertEqual(fx.welcome, [], "та же беседа продолжается — без welcome")
+        XCTAssertEqual(fx.welcome, [], "the same conversation continues — no welcome")
         XCTAssertEqual(a.slotIndex(of: "fork"), 1)
         XCTAssertTrue(a.isHidden("tab"))
         XCTAssertEqual(a.slotIndex(of: "y"), 2)
     }
 
     func testSweepHandsParkedTabSlotToFork() {
-        // форк успел занять слот раньше, чем вкладка записала parkedJobId
+        // the fork took a slot before the tab wrote parkedJobId
         send("SessionStart", "tab", pid: 1)
         send("SessionStart", "x", pid: 5)
         send("SessionStart", "fork", pid: 9)
@@ -401,10 +401,10 @@ extension SlotAllocatorTests {
         now += 1
         let roles = SlotAllocator.Roles(isHidden: { $0 == 1 }, parkedShell: { $0 == 9 ? 1 : nil })
         _ = a.sweep(config: config, now: now, isAlive: { self.alive.contains($0) }, roles: roles)
-        XCTAssertEqual(a.slotIndex(of: "fork"), 0, "лампа вкладки досталась форку")
-        XCTAssertTrue(a.slots[0].muted, "заглушка вкладки сохранилась")
+        XCTAssertEqual(a.slotIndex(of: "fork"), 0, "the tab's lamp went to the fork")
+        XCTAssertTrue(a.slots[0].muted, "the tab's mute was kept")
         XCTAssertEqual(a.slotIndex(of: "x"), 1)
-        XCTAssertEqual(a.slotIndex(of: "z"), 2, "слоты сдвинулись без дырки")
+        XCTAssertEqual(a.slotIndex(of: "z"), 2, "slots shifted without a gap")
         XCTAssertEqual(a.lights, [.off, .idle, .idle, .off])
         XCTAssertTrue(a.isHidden("tab"))
     }

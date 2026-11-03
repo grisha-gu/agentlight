@@ -1,6 +1,6 @@
 import Foundation
 
-/// `GET /status` — снимок демона для `agentlight status` и `doctor`.
+/// `GET /status` — daemon snapshot for `agentlight status` and `doctor`.
 public struct StatusReport: Codable, Sendable {
     public struct SlotInfo: Codable, Sendable {
         public var slot: Int
@@ -24,9 +24,9 @@ public struct StatusReport: Codable, Sendable {
     public var deviceConnected: Bool
     public var slots: [SlotInfo]
     public var overflow: [SessionRecord]
-    /// у старого демона полей нет
+    /// an older daemon doesn't send these fields
     public var automation: TerminalFocus.Automation?
-    /// скрытые сессии (заготовка демона Claude Code, вкладка-оболочка) — светофоров не получают
+    /// hidden sessions (Claude Code daemon spare, shell tab) — they get no traffic light
     public var background: [SessionRecord]?
 
     public init(version: String, pid: Int32, device: String, deviceConnected: Bool,
@@ -43,15 +43,15 @@ public struct StatusReport: Codable, Sendable {
     }
 }
 
-/// `POST /control` — команды CLI демону.
+/// `POST /control` — CLI commands to the daemon.
 public struct ControlRequest: Codable, Sendable {
     public enum Command: String, Codable, Sendable {
-        /// перечитать config.json
+        /// re-read config.json
         case reload
-        /// то же, что кнопка
+        /// same as a hardware button
         case press, long
         case release
-        /// прогнать все состояния на устройстве и в строке меню
+        /// run through all states on the device and in the menu bar
         case test
         case selftest
     }

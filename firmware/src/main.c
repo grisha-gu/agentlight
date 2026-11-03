@@ -1,5 +1,5 @@
-// Прошивка agentlight (M2): светодиоды, анимации, кнопки (только press), выключатель, watchdog heartbeat,
-// протокол по двум транспортам — vendor HID (рабочий) и CDC (ASCII, отладка). docs/03-protocol.md.
+// agentlight firmware (M2): LEDs, animations, buttons (press only), power switch, heartbeat watchdog,
+// protocol over two transports — vendor HID (main) and CDC (ASCII, debugging). docs/03-protocol.md.
 
 #include <ctype.h>
 #include <stdio.h>
@@ -22,22 +22,22 @@ typedef enum { VIA_CDC, VIA_HID } via_t;
 static pico_unique_board_id_t uid;
 static char uid_str[2 * PICO_UNIQUE_BOARD_ID_SIZE_BYTES + 1];
 
-// SELFTEST: каждый светодиод по очереди, затем все красные, все жёлтые, все зелёные, затем OFF.
-// Не блокирует цикл: шаг вычисляется из времени старта.
+// SELFTEST: each LED in turn, then all red, all yellow, all green, then OFF.
+// Doesn't block the loop: the step is computed from the start time.
 #define SELFTEST_SINGLE_STEPS LED_COUNT
-#define SELFTEST_STEPS        (SELFTEST_SINGLE_STEPS + 3 * 2)   // цвет целиком держим два шага
+#define SELFTEST_STEPS        (SELFTEST_SINGLE_STEPS + 3 * 2)   // each whole color is held for two steps
 
-// Кто рисует кадр: состояния слотов (обычный режим), RAW или SELFTEST.
-// RAW держится до первой команды состояния; SELFTEST по окончании возвращает состояния.
+// Who draws the frame: slot states (normal mode), RAW or SELFTEST.
+// RAW holds until the first state command; SELFTEST returns to states when it finishes.
 typedef enum { MODE_ANIM, MODE_RAW, MODE_SELFTEST } run_mode_t;
 
 static run_mode_t mode = MODE_ANIM;
 static uint32_t   selftest_start_ms;
 static uint8_t    config_flags = CONFIG_BUSY_PULSE;
 
-// Watchdog включается первым PING: ручные тесты через screen без heartbeat не гаснут.
+// The watchdog is armed by the first PING: manual tests via screen without a heartbeat don't go dark.
 static bool     wd_armed;
-static bool     wd_tripped;          // сработал и ещё не сообщён в PONG
+static bool     wd_tripped;          // tripped and not yet reported in PONG
 static uint32_t last_ping_ms;
 
 static uint32_t now_ms(void) {
@@ -65,7 +65,7 @@ static void selftest_tick(void) {
         led_set(slot * 3 + color, 1.0f);
 }
 
-// --- ответы и события ------------------------------------------------------
+// --- replies and events -----------------------------------------------------
 
 static void print_ident(const char *prefix) {
     printf("%s agentlight proto=%d fw=%d.%d.%d slots=%d uid=%s power=%s\n",
@@ -101,7 +101,7 @@ static void reply_pong(via_t via, uint32_t seq) {
     }
 }
 
-// События — в оба транспорта: хост слушает основной канал устройства, второй игнорирует.
+// Events go to both transports: the host listens on the device's main channel and ignores the other.
 static void emit_button(uint8_t slot) {
     uint32_t t = now_ms();
     printf("!BTN %u press t=%lu\n", slot, (unsigned long)t);
@@ -116,12 +116,12 @@ static void emit_power(bool on) {
     transport_hid_send(r);
 }
 
-// «Выкл»: всё, что нарисовано (состояния, RAW, SELFTEST), гаснет общим множителем и
-// разгорается обратно — состояния под ним продолжают меняться, при «вкл» видна актуальная картина.
+// "Off": everything drawn (states, RAW, SELFTEST) fades out via the master multiplier and
+// fades back in — states keep changing underneath, so "on" shows the current picture.
 static void power_fade_tick(void) {
     static float level = -1;
     if (level < 0)
-        level = power_is_on();   // при старте — сразу в нужное положение, без затухания
+        level = power_is_on();   // at startup — straight to the right position, no fade
     float step = TICK_US / 1000.0f / POWER_FADE_MS;
     if (power_is_on())
         level = level + step > 1 ? 1 : level + step;
@@ -130,7 +130,7 @@ static void power_fade_tick(void) {
     leds_set_master(level);
 }
 
-// --- исполнение команд -----------------------------------------------------
+// --- command execution ------------------------------------------------------
 
 static void exec(const cmd_t *c, via_t via) {
     uint32_t now = now_ms();
@@ -174,12 +174,12 @@ static void exec(const cmd_t *c, via_t via) {
             led_set((uint8_t)i, c->raw[i] / 255.0f);
         break;
     }
-    // В HID подтверждений нет: репорт либо принят, либо нет.
+    // HID has no acknowledgements: a report is either accepted or not.
     if (via == VIA_CDC)
         printf("OK\n");
 }
 
-// Нет PING дольше WD_TIMEOUT_MS — погасить всё и сообщить один раз.
+// No PING for longer than WD_TIMEOUT_MS — turn everything off and report once.
 static void watchdog_tick(void) {
     if (!wd_armed || now_ms() - last_ping_ms < WD_TIMEOUT_MS)
         return;
@@ -190,9 +190,9 @@ static void watchdog_tick(void) {
     printf("!WD trip\n");
 }
 
-// --- транспорты ------------------------------------------------------------
+// --- transports -------------------------------------------------------------
 
-// Неблокирующее чтение строки из CDC. Возвращает true, когда строка готова.
+// Non-blocking line read from CDC. Returns true when a line is ready.
 static bool read_line(char *buf, size_t cap, size_t *len) {
     int c;
     while ((c = getchar_timeout_us(0)) != PICO_ERROR_TIMEOUT) {
@@ -232,7 +232,7 @@ static void poll_cdc(void) {
 }
 
 static void poll_hid(void) {
-    // READY один раз после энумерации: хост по нему понимает, что железка перезагрузилась.
+    // READY once after enumeration: that's how the host learns the device has rebooted.
     static bool announced;
     bool mounted = transport_hid_mounted();
     if (mounted && !announced)
@@ -250,7 +250,7 @@ static void poll_hid(void) {
 int main(void) {
     pico_get_unique_board_id(&uid);
     pico_get_unique_board_id_string(uid_str, sizeof uid_str);
-    // TinyUSB — до stdio: stdio_usb_init ждёт уже поднятый стек.
+    // TinyUSB before stdio: stdio_usb_init expects the stack to be up already.
     tusb_init();
     stdio_init_all();
     status_led_init();
@@ -265,7 +265,7 @@ int main(void) {
     uint32_t worst_late_us = 0, worst_work_us = 0, stats_ms = 0;
 
     while (true) {
-        // Диагностика: насколько кадр опоздал и сколько занял. Раз в секунду, если плохо.
+        // Diagnostics: how late the frame was and how long it took. Once a second, if bad.
         uint64_t frame_start = time_us_64();
         uint32_t late = (uint32_t)(frame_start - to_us_since_boot(next));
         if (late > worst_late_us)
@@ -277,8 +277,8 @@ int main(void) {
         if (power_poll(&on))
             emit_power(on);
 
-        // Дебаунс кнопок идёт и в «выкл», события молчат: иначе при «вкл» вылетело бы
-        // нажатие, сделанное в темноте.
+        // Button debounce keeps running while "off", but events are suppressed: otherwise
+        // a press made in the dark would fire when switched back "on".
         uint8_t slot;
         while (buttons_poll(&slot))
             if (power_is_on())
@@ -293,8 +293,8 @@ int main(void) {
         power_fade_tick();
         leds_render();
 
-        // Хост шлёт PING — ровный тусклый зелёный; иначе синее «дыхание» раз в секунду: прошивка жива.
-        // В «выкл» встроенный RGB тоже гаснет.
+        // Host sends PING — steady dim green; otherwise a blue "breath" once a second: firmware alive.
+        // When "off", the onboard RGB goes dark too.
         if (!power_is_on()) {
             status_led_set(0, 0, 0);
         } else if (wd_armed) {
@@ -317,7 +317,7 @@ int main(void) {
 
         tick++;
         next = delayed_by_us(next, TICK_US);
-        // USB обслуживаем всё время до следующего тика, а не раз в 8 мс.
+        // Service USB the whole time until the next tick, not once every 8 ms.
         while (!time_reached(next)) {
             tud_task();
             transport_hid_task();

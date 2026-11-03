@@ -2,7 +2,7 @@ import Foundation
 import XCTest
 @testable import AgentLightKit
 
-/// Реальные тела хуков, снятые 2026-10-05 (tools/hook-capture/samples.jsonl).
+/// Real hook bodies captured 2026-10-05 (tools/hook-capture/samples.jsonl).
 func captureSamples() throws -> [Data] {
     let url = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
@@ -94,7 +94,7 @@ final class DeviceProtocolTests: XCTestCase {
         ready[14] = 0
         XCTAssertEqual(DeviceEvent(hidReport: ready),
                        .ready(DeviceIdentity(proto: 1, slots: 4, firmware: "1.0.2", uid: "E66554A14B610F23"), powerOn: false))
-        // fw до 0.6.0 байт 14 не заполняет — выключателя у неё нет
+        // fw before 0.6.0 doesn't fill byte 14 — it has no power switch
         ready[3...5] = [0, 5, 0]
         XCTAssertEqual(DeviceEvent(hidReport: ready),
                        .ready(DeviceIdentity(proto: 1, slots: 4, firmware: "0.5.0", uid: "E66554A14B610F23"), powerOn: true))
@@ -107,7 +107,7 @@ final class DeviceProtocolTests: XCTestCase {
     }
 
     func testASCIIEvents() {
-        // так отвечает текущая прошивка (firmware/src/main.c)
+        // this is how the current firmware answers (firmware/src/main.c)
         XCTAssertEqual(DeviceEvent(asciiLine: "OK agentlight proto=1 fw=0.6.0 slots=4 uid=E66554A14B610F23 power=off\r"),
                        .ready(DeviceIdentity(proto: 1, slots: 4, firmware: "0.6.0", uid: "E66554A14B610F23"), powerOn: false))
         XCTAssertEqual(DeviceEvent(asciiLine: "OK agentlight proto=1 fw=0.1.0 slots=4 uid=E66554A14B610F23"),

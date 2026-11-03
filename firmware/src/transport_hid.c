@@ -4,7 +4,7 @@
 
 #include "tusb.h"
 
-#define QUEUE_LEN 8   // PING раз в секунду, кнопки — редко; переполнение = потеря репорта
+#define QUEUE_LEN 8   // PING once a second, buttons rarely; overflow = a lost report
 
 typedef struct {
     uint8_t buf[QUEUE_LEN][REPORT_SIZE];
@@ -55,7 +55,7 @@ bool transport_hid_mounted(void) {
     return tud_mounted();
 }
 
-// OUT-репорт: по interrupt OUT или SET_REPORT по control — оба приходят сюда.
+// OUT report: arrives here via interrupt OUT or via SET_REPORT on control.
 void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_t type,
                            uint8_t const *buffer, uint16_t bufsize) {
     (void)instance;

@@ -1,21 +1,21 @@
-"""Генератор платы agentlight (docs/02-hardware.md §2.5, §2.7, §2.8).
+"""agentlight board generator (docs/02-hardware.md §2.5, §2.7, §2.8).
 
-Плата целиком описана здесь: детали, цепи, контур, крепёж и трассы. Разводка ручная по схеме
-(не автороутер), поэтому каждая сборка даёт одну и ту же плату:
+The whole board is described here: parts, nets, outline, mounting and tracks. Routing is done by hand
+from the schematic (no autorouter), so every build produces the same board:
 
-* шина — горизонтальные трассы на лицевой стороне (F) в свободной полосе между модулем и жёлтым
-  рядом, шаг 0.7 мм;
-* у каждого слота своя «полоса» — вертикальные трассы на обратной стороне (B) правее столбца
-  (столбец + 9…11 мм), от неё короткие отводы к резисторам ячеек;
-* смена слоя — переходным в конце строки шины; все углы срезаны под 45°.
+* bus — horizontal tracks on the front side (F) in the free band between the module and the yellow
+  row, 0.7 mm pitch;
+* each slot has its own "lane" — vertical tracks on the back side (B) to the right of the column
+  (column + 9…11 mm), with short stubs from it to the cell resistors;
+* layer change — a via at the end of a bus row; all corners chamfered at 45°.
 
-Запуск питоном из KiCad:
+Run with KiCad's python:
   /Applications/KiCad/KiCad.app/Contents/Frameworks/Python.framework/Versions/Current/bin/python3 gen_board.py
 
-Система координат: центр платы = центр сетки 4 × 4, ось Y вниз (как в KiCad).
-Верхний край — задний (к нему ножки корпуса): USB-C модуля и выключатель смотрят туда.
-Лицевая сторона (F) — к панели: только 12 светодиодов и 4 свитча (в гнёзда снаружи).
-Всё остальное — на обратной (B), её собирает завод; модуль в гнёздах и светодиоды паяются вручную.
+Coordinates: board center = center of the 4 × 4 grid, Y axis down (as in KiCad).
+The top edge is the back (the case feet are there): the module's USB-C and the power switch face it.
+Front side (F) — toward the panel: only 12 LEDs and 4 switches (in sockets, from outside).
+Everything else is on the back (B), assembled by the factory; the socketed module and the LEDs are hand-soldered.
 """
 import math
 import os
@@ -26,41 +26,41 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 KICAD_FP = "/Applications/KiCad/KiCad.app/Contents/SharedSupport/footprints"
 OUT = os.path.join(HERE, "agentlight.kicad_pcb")
 
-# --- геометрия ------------------------------------------------------------------
+# --- geometry -------------------------------------------------------------------
 
-PITCH = 20.32            # шаг сетки = 8 × 2.54, совпадает с панелью (§2.9)
-BOARD = 91.0             # коробка ~97 снаружи, стенка ~2.4, зазор ~0.75 на сторону
-HOLE_INSET = 4.0         # крепёжные отверстия M3 от краёв
-ORIGIN = (100.0, 100.0)  # центр платы на листе
+PITCH = 20.32            # grid pitch = 8 × 2.54, matches the panel (§2.9)
+BOARD = 91.0             # box ~97 outside, wall ~2.4, clearance ~0.75 per side
+HOLE_INSET = 4.0         # M3 mounting holes from the edges
+ORIGIN = (100.0, 100.0)  # board center on the sheet
 
 COLS = [(-1.5 + i) * PITCH for i in range(4)]
 ROW_RED, ROW_YELLOW, ROW_GREEN, ROW_SW = [(-1.5 + i) * PITCH for i in range(4)]
 EDGE_TOP = -BOARD / 2
 
-# Модуль: ряды гнёзд по x = столбец 1 ± 7.62 — так они проходят между ножками светодиодов
-# (до ближайшей площадки LED 6.35 мм). Пин 1 (5V, сторона USB) — в 1.5 мм от заднего края,
-# тогда торец USB-C выходит за край платы на ~2 мм, в вырез задней стенки.
+# Module: socket rows at x = column 1 ± 7.62 — that way they pass between the LED legs
+# (6.35 mm to the nearest LED pad). Pin 1 (5V, USB side) is 1.5 mm from the back edge,
+# so the end of the USB-C sticks ~2 mm past the board edge, into the back wall cutout.
 MODULE_X = COLS[1]
 MODULE_Y = EDGE_TOP + 1.5 + 10.16
 
-# Выключатель: на заднем краю, справа от USB (штекер с оболочкой ~12 мм шириной).
+# Power switch: on the back edge, right of the USB (a plug with its overmold is ~12 mm wide).
 POWER_SW_X = COLS[2] + 4.0
-# Крепёжные площадки корпуса (±1.1 от центра) — не ближе 0.5 мм к краю; рычажок (1.45 мм)
-# тогда выходит за край платы на ~0.9 мм. Как он дотягивается до прорези — решается в корпусе.
+# Case mounting pads (±1.1 from center) — no closer than 0.5 mm to the edge; the lever (1.45 mm)
+# then sticks ~0.9 mm past the board edge. How it reaches the slot is solved in the case.
 POWER_SW_Y = EDGE_TOP + 2.0
 
-# Разводка
+# Routing
 TRACK = 0.25
-# Шаг параллельных трасс: между ними должна пройти заливка GND (зазор 0.2 + 0.15 + 0.2),
-# иначе на месте шины остаются тёмные пустоты без меди.
+# Pitch of parallel tracks: GND pour must fit between them (clearance 0.2 + 0.15 + 0.2),
+# otherwise the bus leaves dark copper-free voids.
 STEP = 0.85
-CHAMFER = 0.6            # срез углов под 45°
-LANE = [8.76 + STEP * i for i in range(4)]   # смещения трасс полосы слота от его столбца
-BUS_TOP = -21.3          # первая строка шины; низ модуля −22.8, верх жёлтых площадок −11.1
-RAIL_5V = 7.4            # горизонталь 5 В на лицевой стороне, над зелёным рядом
-ROW_BTN_PARTS = ROW_SW + 3.52                # R и C кнопок под гнездом
+CHAMFER = 0.6            # 45° corner chamfer
+LANE = [8.76 + STEP * i for i in range(4)]   # offsets of a slot lane's tracks from its column
+BUS_TOP = -21.3          # first bus row; module bottom −22.8, top of the yellow pads −11.1
+RAIL_5V = 7.4            # 5 V horizontal on the front side, above the green row
+ROW_BTN_PARTS = ROW_SW + 3.52                # button R and C under the socket
 
-# --- детали (LCSC — базовая библиотека JLCPCB, где есть) ------------------------
+# --- parts (LCSC — JLCPCB basic library where available) ------------------------
 
 R_0805 = ("Resistor_SMD", "R_0805_2012Metric")
 C_0805 = ("Capacitor_SMD", "C_0805_2012Metric")
@@ -82,17 +82,17 @@ LCSC = {
     "S8050": "C2146",
     "CPG151101S11": "C41430893",
     "MSK12C02": "C431540",
-    # Гнёзда модуля — низкопрофильные, номера выбраны при заказе (2026-10-28).
-    "Socket_1x8": "C27985233",  # Hong Cheng HC-PM254-5.0H-1x8PZ, 5 мм
+    # Module sockets — low-profile, part numbers chosen at order time (2026-10-28).
+    "Socket_1x8": "C27985233",  # Hong Cheng HC-PM254-5.0H-1x8PZ, 5 mm
     "Socket_1x7": "C27985232",  # HC-PM254-5.0H-1x7PZ
 }
 
 COLOR = ["RED", "YELLOW", "GREEN"]
 
-# Номинал на красный и жёлтый — по макетке (§2.3): 220 Ω. Зелёный 525 нм — от 5 В через NPN (§2.2).
+# Red and yellow value — from the breadboard (§2.3): 220 Ω. Green 525 nm — from 5 V via an NPN (§2.2).
 R_LED = {"RED": "220", "YELLOW": "220"}
 
-# --- сборка ---------------------------------------------------------------------
+# --- assembly -------------------------------------------------------------------
 
 board = pcbnew.BOARD()
 nets = {}
@@ -120,9 +120,9 @@ def xy(p):
 
 
 def place(ref, fp_id, value, x, y, rot=0, back=False, pads=None, sides=None, lcsc=None, hand=False):
-    """pads: номер площадки → цепь; sides: «west/east/north/south» → цепь (крайняя площадка
-    с той стороны — так не надо помнить, куда уехал вывод после поворота и переворота).
-    hand — паяется вручную, не в BOM/CPL завода."""
+    """pads: pad number → net; sides: "west/east/north/south" → net (the outermost pad
+    on that side — so there's no need to remember where a lead ended up after rotation and flip).
+    hand — hand-soldered, not in the factory BOM/CPL."""
     fp = pcbnew.FootprintLoad(lib_path(fp_id[0]), fp_id[1])
     fp.SetReference(ref)
     fp.SetValue(value)
@@ -149,7 +149,7 @@ def place(ref, fp_id, value, x, y, rot=0, back=False, pads=None, sides=None, lcs
     if hand:
         fp.SetExcludedFromBOM(True)
         fp.SetExcludedFromPosFiles(True)
-    # Мелкие SMD завод ставит по CPL — их подписи только налезали бы на площадки.
+    # The factory places small SMD parts from the CPL — their labels would only overlap the pads.
     if ref[0] in "RCQJ" or ref == "SW5":
         fp.Reference().SetVisible(False)
     fps[ref] = fp
@@ -157,11 +157,11 @@ def place(ref, fp_id, value, x, y, rot=0, back=False, pads=None, sides=None, lcs
 
 
 def pad(ref, net_name):
-    """Координаты площадки детали по цепи (первая, если их несколько)."""
+    """Coordinates of a part's pad by net (the first one if there are several)."""
     for p in fps[ref].Pads():
         if p.GetNetname() == net_name:
             return xy(p.GetPosition())
-    raise KeyError(f"{ref}: нет площадки {net_name}")
+    raise KeyError(f"{ref}: no pad {net_name}")
 
 
 def gp(n):
@@ -169,7 +169,7 @@ def gp(n):
 
 
 def module_pin(net_name):
-    """Контакт гнезда модуля с этой цепью."""
+    """The module socket contact on this net."""
     for ref in ["J1", "J2", "J3"]:
         for p in fps[ref].Pads():
             if p.GetNetname() == net_name:
@@ -177,9 +177,9 @@ def module_pin(net_name):
     raise KeyError(net_name)
 
 
-# Светодиоды: столбец = слот, ряд = цвет; GPIO = slot * 3 + color (§2.6).
-# Футпринт: площадка 1 — катод (квадрат), 2 — анод через 2.54 правее. Центр LED — в центре ячейки.
-# Резистор каждой ячейки — справа от анода: внутренняя площадка к аноду, внешняя — к полосе слота.
+# LEDs: column = slot, row = color; GPIO = slot * 3 + color (§2.6).
+# Footprint: pad 1 — cathode (square), 2 — anode 2.54 to the right. LED center = cell center.
+# Each cell's resistor is right of the anode: inner pad to the anode, outer pad to the slot lane.
 for slot, cx in enumerate(COLS):
     for color, cy in enumerate([ROW_RED, ROW_YELLOW, ROW_GREEN]):
         g = slot * 3 + color
@@ -188,15 +188,15 @@ for slot, cx in enumerate(COLS):
         place(f"D{g + 1}", LED10, f"LED10_{name}", cx - 1.27, cy,
               pads={"1": cathode, "2": anode}, hand=True)
         if g == 3:
-            # красный слота 1 — внутри модуля; справа гнездо J2, поэтому резистор стоит над анодом
+            # slot 1 red is inside the module; socket J2 is to the right, so the resistor sits above the anode
             place(f"R{g + 1}", R_0805, R_LED[name], cx + 1.27, cy - 4.2, rot=90, back=True,
                   sides={"south": anode, "north": gp(g)}, lcsc=LCSC[R_LED[name]])
         elif name != "GREEN":
-            # GPIO → R → анод, катод на GND
+            # GPIO → R → anode, cathode to GND
             place(f"R{g + 1}", R_0805, R_LED[name], cx + 4.2, cy, back=True,
                   sides={"west": anode, "east": gp(g)}, lcsc=LCSC[R_LED[name]])
         else:
-            # 5V → 330 → анод; катод → коллектор NPN под ним; GPIO → 1k → база; эмиттер на GND (§2.2)
+            # 5V → 330 → anode; cathode → NPN collector below it; GPIO → 1k → base; emitter to GND (§2.2)
             base = f"Q{slot}_B"
             place(f"R{g + 1}", R_0805, "330", cx + 4.2, cy, back=True,
                   sides={"west": anode, "east": "+5V"}, lcsc=LCSC["330"])
@@ -206,9 +206,9 @@ for slot, cx in enumerate(COLS):
             place(f"R{20 + slot + 1}", R_0805, "1k", cx + 2.5, by, back=True,
                   sides={"west": base, "east": gp(g)}, lcsc=LCSC["1k"])
 
-# Кнопки: hot-swap гнездо снизу, свитч вставляется снаружи сквозь панель.
-# GPIO → 220 → узел → свитч → GND, 100 нФ с узла на GND (§2.4). C — под выводом гнезда,
-# R — справа, внешней площадкой к полосе слота.
+# Buttons: hot-swap socket underneath, the switch is inserted from outside through the panel.
+# GPIO → 220 → node → switch → GND, 100 nF from the node to GND (§2.4). C — under the socket lead,
+# R — to the right, outer pad to the slot lane.
 for slot, cx in enumerate(COLS):
     node = f"BTN{slot}"
     place(f"SW{slot + 1}", HOTSWAP, "MX_hotswap", cx, ROW_SW, back=True,
@@ -218,8 +218,8 @@ for slot, cx in enumerate(COLS):
     place(f"C{slot + 1}", C_0805, "100n", cx - 4.72, ROW_BTN_PARTS, back=True,
           sides={"east": node, "west": "GND"}, lcsc=LCSC["100n"])
 
-# Выключатель на задней стенке: GP26 → 220 → узел → общий вывод/крайний → GND (§2.5).
-# R — прямо под выводом узла, C — рядом с ним, параллельно.
+# Power switch on the back wall: GP26 → 220 → node → common/outer lead → GND (§2.5).
+# R — right under the node lead, C — next to it, in parallel.
 place("SW5", SLIDE, "MSK12C02", POWER_SW_X, POWER_SW_Y, rot=180, back=True,
       pads={"1": "PWR_SW", "2": "GND"}, lcsc=LCSC["MSK12C02"])
 sw_x, sw_y = pad("SW5", "PWR_SW")
@@ -228,7 +228,7 @@ place("R35", R_0805, "220", sw_x, sw_y + 2.95, rot=90, back=True,
 place("C5", C_0805, "100n", sw_x - 2.5, sw_y + 2.95, rot=90, back=True,
       sides={"north": "PWR_SW", "south": "GND"}, lcsc=LCSC["100n"])
 
-# Модуль в гнёздах, вид сверху USB вверх — на обратной стороне (flip).
+# Socketed module, top view USB up — on the back side (flip).
 from gen_module_fp import PINS  # noqa: E402
 
 module_nets = {}
@@ -241,18 +241,18 @@ for num, (name, _, _) in PINS.items():
         module_nets[str(num)] = name
 place("U1", MODULE, "RP2040-Zero", MODULE_X, MODULE_Y, back=True, hand=True)
 
-# Гнёзда модуля — низкопрофильные 5 мм (решено 2026-10-28: модуль ниже, штырьки укоротить до ~4 мм),
-# паяет завод (THT). Нижний ряд модуля на одной линии с последними боковыми пинами, поэтому
-# 1×8 + 1×8 по бокам и 1×7 снизу (вместе с угловыми GP8 и GP14); гнёзда стоят встык.
-# (1×9 C39576 у завода кончился 2026-10-28.)
-# Цепь каждого контакта — по пину модуля в той же точке (модуль перевёрнут: x зеркально).
+# Module sockets — low-profile 5 mm (decided 2026-10-28: module sits lower, pins trimmed to ~4 mm),
+# soldered by the factory (THT). The module's bottom row is in line with the last side pins, so
+# 1×8 + 1×8 on the sides and 1×7 at the bottom (including corner GP8 and GP14); the sockets butt together.
+# (The factory ran out of 1×9 C39576 on 2026-10-28.)
+# Each contact's net comes from the module pin at the same spot (the module is flipped: x mirrored).
 pin_at = {(round(MODULE_X - x, 2), round(MODULE_Y + y, 2)): str(num) for num, (_, x, y) in PINS.items()}
 for ref, fp_id, value, x, y, rot in [
         ("J1", SOCKET8, "Socket_1x8", MODULE_X - 7.62, MODULE_Y - 10.16, 0),
         ("J2", SOCKET8, "Socket_1x8", MODULE_X + 7.62, MODULE_Y - 10.16, 0),
         ("J3", SOCKET7, "Socket_1x7", MODULE_X - 7.62, MODULE_Y + 10.16, -90)]:
     fp = place(ref, fp_id, value, x, y, rot=rot, back=True, lcsc=LCSC[value] or None)
-    # Гнёзда стоят встык под контуром модуля: их рамки и квадратный ключ пина 1 только мешают.
+    # The sockets butt together under the module outline: their frames and the square pin-1 key only get in the way.
     for g in list(fp.GraphicalItems()):
         if g.GetLayer() in (pcbnew.F_SilkS, pcbnew.B_SilkS):
             fp.Remove(g)
@@ -260,35 +260,35 @@ for ref, fp_id, value, x, y, rot in [
         p.SetShape(pcbnew.PADSTACK.ALL_LAYERS, pcbnew.PAD_SHAPE_CIRCLE)
         num = pin_at.get(tuple(round(c, 2) for c in xy(p.GetPosition())))
         if num is None:
-            raise SystemExit(f"{ref}: контакт {p.GetNumber()} не попал в пин модуля")
+            raise SystemExit(f"{ref}: contact {p.GetNumber()} doesn't land on a module pin")
         if num in module_nets:
             p.SetNet(net(module_nets[num]))
 
-# Развязка 5 В — у вертикали 5 В рядом с модулем.
+# 5 V decoupling — at the 5 V vertical next to the module.
 V5_X = COLS[1] + LANE[1]
 place("C6", C_0805, "10u", V5_X + 1.92, -41.5, back=True,
       sides={"west": "+5V", "east": "GND"}, lcsc=LCSC["10u"])
 place("C7", C_0805, "100n", V5_X + 1.92, -38.0, back=True,
       sides={"west": "+5V", "east": "GND"}, lcsc=LCSC["100n"])
 
-# Крепёж M3 по углам — на бобышки панели высотой pcb_gap.
+# M3 mounting at the corners — onto the panel bosses of height pcb_gap.
 h = BOARD / 2 - HOLE_INSET
 for i, (sx, sy) in enumerate([(-1, -1), (1, -1), (1, 1), (-1, 1)]):
     place(f"H{i + 1}", M3, "M3", sx * h, sy * h, hand=True).Reference().SetVisible(False)
 
-# --- трассы -----------------------------------------------------------------------
+# --- tracks -----------------------------------------------------------------------
 
 F, B = pcbnew.F_Cu, pcbnew.B_Cu
 
 
 def chamfered(pts):
-    """Углы ломаной срезаются под 45°: катет CHAMFER, но не больше половины соседних отрезков."""
+    """Polyline corners are chamfered at 45°: leg CHAMFER, but no more than half of the adjacent segments."""
     out = [pts[0]]
     for prev, cur, nxt in zip(pts, pts[1:], pts[2:]):
         a = min(CHAMFER, math.dist(prev, cur) / 2, math.dist(cur, nxt) / 2)
         d1 = [(c - p) / math.dist(prev, cur) for p, c in zip(prev, cur)]
         d2 = [(n - c) / math.dist(cur, nxt) for c, n in zip(cur, nxt)]
-        if abs(d1[0] * d2[1] - d1[1] * d2[0]) < 1e-9:   # прямо — угла нет
+        if abs(d1[0] * d2[1] - d1[1] * d2[0]) < 1e-9:   # straight — no corner
             out.append(cur)
             continue
         out.append((cur[0] - d1[0] * a, cur[1] - d1[1] * a))
@@ -320,15 +320,15 @@ def via(net_name, x, y):
 
 
 def gnd_via(x, y):
-    """GND-вывод SMD на обратной стороне → переходное к заливке лицевой (сшивка)."""
+    """GND lead of a back-side SMD → via to the front pour (stitching)."""
     via("GND", x, y)
 
 
-# Полоса слота: какие цепи идут в ней, слева направо. Порядок такой, чтобы отводы влево
-# (сверху вниз: красный, жёлтый, зелёный, кнопка) не пересекали соседние трассы полосы.
+# Slot lane: which nets run in it, left to right. The order keeps the stubs going left
+# (top to bottom: red, yellow, green, button) from crossing the lane's neighboring tracks.
 LANES = {
     0: ["GP0", "GP1", "GP2", "GP12"],
-    1: ["GP4", "+5V", "GP5", "GP13"],      # красный слота 1 (GP3) — коротко внутри модуля
+    1: ["GP4", "+5V", "GP5", "GP13"],      # slot 1 red (GP3) — short, inside the module
     2: ["GP6", "GP7", "GP8", "GP14"],
     3: ["GP9", "GP10", "GP11", "GP15"],
 }
@@ -340,7 +340,7 @@ def slot_of(name):
 
 
 def target(name):
-    """Площадка резистора, куда приходит GPIO из полосы."""
+    """The resistor pad where the GPIO from the lane arrives."""
     n = int(name[2:])
     if n >= 12:
         return pad(f"R{30 + n - 12 + 1}", name)
@@ -348,11 +348,11 @@ def target(name):
     return pad(f"R{20 + slot + 1}" if color == 2 else f"R{n + 1}", name)
 
 
-# Шина на лицевой: строки сверху вниз. Чем левее цепь входит в шину, тем ниже её строка —
-# тогда вертикали входа не пересекают строки, которые уже идут вправо.
+# Bus on the front: rows top to bottom. The further left a net enters the bus, the lower its row —
+# then the entry verticals don't cross rows that are already heading right.
 BUS = ["GP15", "GP14", "GP13", "GP11", "GP10", "GP9", "GP8", "GP7", "GP6", "GP5", "GP4"]
 bus_y = {n: BUS_TOP + STEP * i for i, n in enumerate(BUS)}
-# GP4–GP8 выходят из левого ряда модуля влево (на лицевой), обходят его и спускаются в шину.
+# GP4–GP8 leave the module's left row to the left (on the front), go around it and drop into the bus.
 DETOUR_X = {f"GP{i}": -23.0 - STEP * (8 - i) for i in range(4, 9)}
 
 for name in BUS:
@@ -363,7 +363,7 @@ for name in BUS:
         dx = DETOUR_X[name]
         track(name, F, (px, py), (dx, py), (dx, y), (lx, y))
     elif name == "GP15":
-        # пин 8 правого ряда: под ним пин 9 (GP14) — уйти чуть вправо и вниз мимо него
+        # pin 8 of the right row: pin 9 (GP14) is below it — step slightly right and down past it
         track(name, F, (px, py), (px + 1.34, py), (px + 1.34, y), (lx, y))
     else:
         track(name, F, (px, py), (px, y), (lx, y))
@@ -371,8 +371,8 @@ for name in BUS:
     tx, ty = target(name)
     track(name, B, (lx, y), (lx, ty), (tx, ty))
 
-# Слот 0 — полоса левее модуля: GP0–GP2 выходят из левого ряда прямо в неё (обратная сторона),
-# GP12 — с нижнего торца модуля под ним.
+# Slot 0 — the lane left of the module: GP0–GP2 leave the left row straight into it (back side),
+# GP12 — from the module's bottom end, under it.
 for name in ["GP0", "GP1", "GP2"]:
     px, py = module_pin(name)
     tx, ty = target(name)
@@ -381,20 +381,20 @@ px, py = module_pin("GP12")
 tx, ty = target("GP12")
 track("GP12", B, (px, py), (px, py + 1.68), (lane_x["GP12"], py + 1.68), (lane_x["GP12"], ty), (tx, ty))
 
-# Красный слота 1 (GP3): резистор внутри модуля над анодом — по обратной стороне напрямую.
+# Slot 1 red (GP3): the resistor inside the module above the anode — directly on the back side.
 px, py = module_pin("GP3")
 tx, ty = target("GP3")
 track("GP3", B, (px, py), (tx, py), (tx, ty))
 
-# GP26 → R35 у выключателя: по лицевой вправо и вверх, переходным к резистору.
+# GP26 → R35 at the power switch: on the front right and up, via to the resistor.
 px, py = module_pin("GP26")
 tx, ty = pad("R35", "GP26")
 track("GP26", F, (px, py), (COLS[2] - 3.76, py), (COLS[2] - 3.76, ty + 2.6), (tx, ty + 2.6))
 via("GP26", tx, ty + 2.6)
 track("GP26", B, (tx, ty + 2.6), (tx, ty))
 
-# 5 В: от пина 1 модуля вертикалью в полосе слота 1 до горизонтали над зелёным рядом,
-# оттуда переходными к 330 Ω каждой ячейки.
+# 5 V: from module pin 1 as a vertical in the slot 1 lane down to the horizontal above the green row,
+# from there via vias to each cell's 330 Ω.
 px, py = module_pin("+5V")
 track("+5V", B, (px, py), (V5_X, py), (V5_X, RAIL_5V))
 via("+5V", V5_X, RAIL_5V)
@@ -410,7 +410,7 @@ for fx, fy in feeds:
     via("+5V", fx, RAIL_5V)
     track("+5V", B, (fx, RAIL_5V), (fx, fy))
 
-# Ячейки: короткие связи внутри.
+# Cells: short connections inside.
 for slot, cx in enumerate(COLS):
     for color, cy in enumerate([ROW_RED, ROW_YELLOW, ROW_GREEN]):
         g = slot * 3 + color
@@ -423,7 +423,7 @@ for slot, cx in enumerate(COLS):
             ex, ey = pad(q, "GND")
             gnd_via(ex, ey + 1.5)
             track("GND", B, (ex, ey), (ex, ey + 1.5))
-    # кнопка: вывод гнезда → C → R
+    # button: socket lead → C → R
     node = f"BTN{slot}"
     hx, hy = next(xy(p.GetPosition()) for p in fps[f"SW{slot + 1}"].Pads()
                   if p.GetNetname() == node and p.GetAttribute() == pcbnew.PAD_ATTRIB_PTH)
@@ -433,7 +433,7 @@ for slot, cx in enumerate(COLS):
     gnd_via(gx, gy + 1.5)
     track("GND", B, (gx, gy), (gx, gy + 1.5))
 
-# Выключатель: вывод узла → R35 и C5; GND-вывод и C5 → переходные.
+# Power switch: node lead → R35 and C5; GND lead and C5 → vias.
 track("PWR_SW", B, (sw_x, sw_y), pad("R35", "PWR_SW"), pad("C5", "PWR_SW"))
 gx, gy = pad("SW5", "GND")
 gnd_via(gx, gy + 1.6)
@@ -442,7 +442,7 @@ gx, gy = pad("C5", "GND")
 gnd_via(gx - 1.2, gy)
 track("GND", B, (gx, gy), (gx - 1.2, gy))
 
-# --- контур, заливка, правила -------------------------------------------------------
+# --- outline, pour, rules -------------------------------------------------------
 
 half = BOARD / 2
 corners = [(-half, -half), (half, -half), (half, half), (-half, half)]
@@ -455,7 +455,7 @@ for (x1, y1), (x2, y2) in zip(corners, corners[1:] + corners[:1]):
     seg.SetWidth(pcbnew.FromMM(0.1))
     board.Add(seg)
 
-# GND — заливкой на обеих сторонах.
+# GND — as a pour on both sides.
 for layer in (F, B):
     z = pcbnew.ZONE(board)
     z.SetLayer(layer)
@@ -463,13 +463,13 @@ for layer in (F, B):
     z.AddPolygon(pcbnew.VECTOR_VECTOR2I([mm(x, y) for x, y in corners]))
     z.SetLocalClearance(pcbnew.FromMM(0.2))
     z.SetMinThickness(pcbnew.FromMM(0.15))
-    # Узкие полоски между трассами, запертые переходными, не выбрасывать — иначе вместо них пустоты.
+    # Don't drop narrow slivers between tracks fenced in by vias — otherwise they become voids.
     z.SetIslandRemovalMode(pcbnew.ISLAND_REMOVAL_MODE_NEVER)
     z.SetPadConnection(pcbnew.ZONE_CONNECTION_THERMAL)
     board.Add(z)
 
-# Минимумы JLCPCB с запасом: дорожка/зазор 0.2, переходное 0.6/0.3, медь до края 0.5
-# (стандарт KiCad; правила платы без .kicad_pro не сохраняются, DRC берёт его же).
+# JLCPCB minimums with margin: track/clearance 0.2, via 0.6/0.3, copper to edge 0.5
+# (KiCad default; board rules aren't saved without .kicad_pro, DRC uses the same one).
 ds = board.GetDesignSettings()
 ds.SetCopperLayerCount(2)
 nc = ds.m_NetSettings.GetDefaultNetclass()
@@ -481,7 +481,7 @@ ds.m_CopperEdgeClearance = pcbnew.FromMM(0.5)
 
 
 def label(text, x, y, back=True, size=1.2, left=False):
-    """left — выровнять по левому краю (как читается на своей стороне), x — начало строки."""
+    """left — align left (as it reads on its own side), x — start of the line."""
     t = pcbnew.PCB_TEXT(board)
     t.SetText(text)
     if left:
@@ -496,11 +496,11 @@ def label(text, x, y, back=True, size=1.2, left=False):
     return t
 
 
-# Светодиоды паяются вручную с обратной стороны — там же подписи рядов и полярности.
+# LEDs are hand-soldered from the back side — the row and polarity labels are there too.
 for name, cy in [("R", ROW_RED), ("Y", ROW_YELLOW), ("G", ROW_GREEN)]:
     label(name, -half + 2.5, cy, size=1.5)
-# Полярность у каждого светодиода: «+» над анодом (площадка 2), «−» над катодом.
-# У красного слота 1 сверху резистор R4 — там подписи под площадками.
+# Polarity at each LED: "+" above the anode (pad 2), "−" above the cathode.
+# Slot 1 red has resistor R4 above it — there the labels go under the pads.
 for g in range(12):
     for num, sign in [("1", "-"), ("2", "+")]:
         px, py = xy(next(p for p in fps[f"D{g + 1}"].Pads() if p.GetNumber() == num).GetPosition())
@@ -508,19 +508,19 @@ for g in range(12):
 for slot, cx in enumerate(COLS):
     label(str(slot + 1), cx, ROW_SW - 11.0, back=False)
 
-# --- иконка приложения на обратной стороне -------------------------------------------
-# Контур иконки из host/scripts/make-icon.swift (там же её координаты: 1024 × 1024, Y вверх):
-# голова, слева полголовы робота (антенна, ухо, глаз, рот-решётка), справа три огня светофора.
-# Значок ~7.5 мм в левом нижнем углу (если смотреть на обратную сторону) — между крепёжным
-# отверстием, гнездом кнопки 4 и краем платы; справа от него подписи.
-ICON_S = 0.012                      # мм на единицу иконки: 634 единицы по высоте → 7.6 мм
-ICON_C = (489, 553)                 # центр рисунка с ухом и антенной
-ICON_AT = (34.0, half - 6.3)        # где он на плате; ухо — к отверстию H3, антенна под R34
-ICON_W = 0.3                        # толщина линий
+# --- app icon on the back side -------------------------------------------------------
+# Icon outline from host/scripts/make-icon.swift (its coordinates too: 1024 × 1024, Y up):
+# a head, left half robot (antenna, ear, eye, grille mouth), right half three traffic lights.
+# The badge is ~7.5 mm in the bottom left corner (looking at the back side) — between the mounting
+# hole, button 4's socket and the board edge; the labels are to its right.
+ICON_S = 0.012                      # mm per icon unit: 634 units of height → 7.6 mm
+ICON_C = (489, 553)                 # center of the drawing including ear and antenna
+ICON_AT = (34.0, half - 6.3)        # where it is on the board; ear toward hole H3, antenna under R34
+ICON_W = 0.3                        # line width
 
 
 def icon_pt(x, y):
-    """Точка иконки → плата. Смотрим на обратную сторону, поэтому x зеркально."""
+    """Icon point → board. We look at the back side, so x is mirrored."""
     return ICON_AT[0] - (x - ICON_C[0]) * ICON_S, ICON_AT[1] - (y - ICON_C[1]) * ICON_S
 
 
@@ -539,7 +539,7 @@ def icon_line(x1, y1, x2, y2):
 
 
 def icon_arc(cx, cy, r, a1, a2):
-    """Дуга против часовой от a1 до a2 (радианы, как в CoreGraphics)."""
+    """Counterclockwise arc from a1 to a2 (radians, as in CoreGraphics)."""
     am = (a1 + a2) / 2
     p = [mm(*icon_pt(cx + r * math.cos(a), cy + r * math.sin(a))) for a in (a1, am, a2)]
     silk(pcbnew.SHAPE_T_ARC, SetArcGeometry=p)
@@ -561,45 +561,45 @@ def icon_rrect(x, y, w, h, r):
         icon_arc(cx, cy, r, a, a + pi / 2)
 
 
-# Голова 560 × 520, шов посередине
+# Head 560 × 520, seam in the middle
 hx, hy, hw, hh = 232, 236, 560, 520
 mid = hx + hw / 2
 icon_rrect(hx, hy, hw, hh, 130)
 icon_line(mid, hy, mid, hy + hh)
-# Антенна с шариком
+# Antenna with a ball
 icon_line(372, hy + hh, 372, hy + hh + 62)
 icon_circle(372, hy + hh + 88, 26)
-# Ухо-болт слева — только то, что торчит из головы
+# Bolt ear on the left — only the part sticking out of the head
 ey1, ey2, er = hy + hh / 2 - 70, hy + hh / 2 + 70, 26
 icon_line(hx, ey2, hx - 46 + er, ey2)
 icon_arc(hx - 46 + er, ey2 - er, er, math.pi / 2, math.pi)
 icon_line(hx - 46, ey2 - er, hx - 46, ey1 + er)
 icon_arc(hx - 46 + er, ey1 + er, er, math.pi, 3 * math.pi / 2)
 icon_line(hx - 46 + er, ey1, hx, ey1)
-# Глаз
-# (в 9 мм двойные кольца сливаются — вместо внутреннего кольца зрачок)
+# Eye
+# (at 9 mm double rings merge — a pupil instead of the inner ring)
 icon_circle(382, 560, 72)
 icon_circle(382, 560, 30, filled=True)
-# Рот-решётка
+# Grille mouth
 mw = mid - 292 - 34
 icon_rrect(292, 330, mw, 74, 22)
 for i in (1, 2, 3):
     icon_line(292 + mw * i / 4, 330, 292 + mw * i / 4, 404)
-# Три огня с козырьками
+# Three lights with visors
 lx = mid + (hx + hw - mid) / 2 - 6
 for ly in (hy + hh - 106, hy + hh / 2, hy + 106):
     icon_circle(lx, ly, 52)
     icon_arc(lx, ly, 82, math.pi * 0.12, math.pi * 0.88)
 
-# Справа от значка — имя с ревизией платы (не версией прошивки) и репо, за ними лицензия и автор.
-# Всё по середине головы: выше — переходные под резисторами кнопок (~35.7), ниже — край платы.
-# Мельче 1.0 мм шрифт не ставим — минимум JLCPCB (толщина линии 0.15 мм).
+# Right of the badge — name with the board revision (not firmware version) and repo, then license and author.
+# All at mid-head height: above are the vias under the button resistors (~35.7), below is the board edge.
+# No font smaller than 1.0 mm — the JLCPCB minimum (line width 0.15 mm).
 GAP = 1.5
 _, head_y = icon_pt(792, hy + hh / 2)
 text_x = icon_pt(792, 0)[0] - GAP
 lines = [label("agentlight rev. a", text_x, head_y - 1.15, size=1.6, left=True),
          label("github.com/grisha-gu/agentlight", text_x, head_y + 1.35, size=1.0, left=True)]
-# конец длинной строки (зеркально — левый край рамки)
+# end of the long line (mirrored — the left edge of the frame)
 text_x = min(pcbnew.ToMM(t.GetBoundingBox().GetX()) for t in lines) - ORIGIN[0] - 3.0
 label("CERN-OHL-P-2.0", text_x, head_y - 0.9, size=1.0, left=True)
 label("by Gregory Gulyaev", text_x, head_y + 0.9, size=1.0, left=True)
@@ -608,8 +608,8 @@ board.BuildConnectivity()
 pcbnew.ZONE_FILLER(board).Fill(board.Zones())
 board.Save(OUT)
 
-# Таблица библиотек рядом с платой — чтобы KiCad нашёл agentlight.pretty при открытии.
+# Library table next to the board — so KiCad finds agentlight.pretty when opening it.
 open(os.path.join(HERE, "fp-lib-table"), "w").write(
     '(fp_lib_table\n  (version 7)\n'
     '  (lib (name "agentlight")(type "KiCad")(uri "${KIPRJMOD}/agentlight.pretty")(options "")(descr "agentlight"))\n)\n')
-print(OUT, "—", len(board.GetFootprints()), "деталей,", len(nets), "цепей,", len(board.GetTracks()), "трасс/переходных")
+print(OUT, "—", len(board.GetFootprints()), "parts,", len(nets), "nets,", len(board.GetTracks()), "tracks/vias")

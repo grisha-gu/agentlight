@@ -26,7 +26,7 @@ bool buttons_poll(uint8_t *slot) {
             raw_down[s] = down;
             raw_since_ms[s] = now;
         }
-        // Уровень принимается, только если продержался BTN_DEBOUNCE_MS без дребезга.
+        // A level is accepted only after it has held for BTN_DEBOUNCE_MS without bouncing.
         if (raw_down[s] != stable_down[s] && now - raw_since_ms[s] >= BTN_DEBOUNCE_MS) {
             stable_down[s] = raw_down[s];
             if (stable_down[s]) {

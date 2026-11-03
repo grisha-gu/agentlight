@@ -1,13 +1,13 @@
-# Проверка макетки M1 на MicroPython (RP2040-Zero).
+# M1 breadboard check on MicroPython (RP2040-Zero).
 #
-# Схема: GP0/GP1/GP2 -> резистор -> анод LED (красный/жёлтый/зелёный),
-#        катоды на GND; кнопка GP14 <-> GND.
+# Wiring: GP0/GP1/GP2 -> resistor -> LED anode (red/yellow/green),
+#        cathodes to GND; button GP14 <-> GND.
 #
-# Режимы (переключаются кнопкой):
-#   0 cycle  — каждый цвет по очереди плавно разгорается и гаснет
-#   1 steady — все три горят ровно (сравнить яркость, менять LED в слоте)
-#   2 off    — всё погашено
-# Встроенный RGB (GP16) мигает синим — признак, что скрипт жив.
+# Modes (switched by the button):
+#   0 cycle  — each color in turn fades in and out smoothly
+#   1 steady — all three lit steadily (compare brightness, swap LEDs in a slot)
+#   2 off    — everything off
+# The onboard RGB (GP16) blinks blue — a sign the script is alive.
 
 import time
 from machine import Pin, PWM
@@ -34,7 +34,7 @@ def set_all(duty):
 
 
 def gamma(x):
-    # x in 0..1 -> duty_u16; квадрат, чтобы затухание выглядело плавным на глаз
+    # x in 0..1 -> duty_u16; squared so the fade looks smooth to the eye
     return int(65535 * x * x)
 
 
@@ -48,7 +48,7 @@ while True:
     now = time.ticks_ms()
     t = time.ticks_diff(now, t0)
 
-    # кнопка: дебаунс 30 мс, срабатывает на нажатие
+    # button: 30 ms debounce, fires on press
     b = btn.value()
     if b != btn_prev and time.ticks_diff(now, btn_changed_at) > 30:
         btn_changed_at = now
@@ -61,7 +61,7 @@ while True:
             print("BTN release")
 
     if mode == 0:
-        # 2 с на цвет: 1 с вверх, 1 с вниз
+        # 2 s per color: 1 s up, 1 s down
         phase = t % 6000
         idx = phase // 2000
         local = (phase % 2000) / 1000

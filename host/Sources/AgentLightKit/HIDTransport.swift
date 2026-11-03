@@ -1,11 +1,11 @@
 import Foundation
 import IOKit.hid
 
-/// Vendor HID (usage page 0xFF00), 64-байтные репорты, docs/03-protocol.md §3.3.
-/// Hot-plug целиком на колбэках IOHIDManager — никакого опроса.
+/// Vendor HID (usage page 0xFF00), 64-byte reports, docs/03-protocol.md §3.3.
+/// Hot-plug entirely via IOHIDManager callbacks — no polling.
 public final class HIDTransport: DeviceTransport {
     public static let usagePage = 0xFF00
-    /// pid.codes 1209:AC01 и, на время разработки, VID Raspberry Pi
+    /// pid.codes 1209:AC01 and, during development, the Raspberry Pi VID
     public static let vendorIDs = [0x1209, 0x2E8A]
 
     public let name = "HID"
@@ -33,7 +33,7 @@ public final class HIDTransport: DeviceTransport {
         IOHIDManagerScheduleWithRunLoop(m, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
         let r = IOHIDManagerOpen(m, IOOptionBits(kIOHIDOptionsTypeNone))
         if r != kIOReturnSuccess {
-            Log.warn("HID: IOHIDManagerOpen вернул 0x\(String(r, radix: 16)) — проверь Input Monitoring (agentlight doctor)")
+            Log.warn("HID: IOHIDManagerOpen returned 0x\(String(r, radix: 16)) — check Input Monitoring (agentlight doctor)")
         }
         manager = m
     }
@@ -52,7 +52,7 @@ public final class HIDTransport: DeviceTransport {
         let ch = HIDChannel(device: dev)
         channels.append(ch)
         let product = IOHIDDeviceGetProperty(dev, kIOHIDProductKey as CFString) as? String ?? "?"
-        Log.info("HID: найдено устройство \(product)")
+        Log.info("HID: found device \(product)")
         onAttach?(ch)
     }
 
@@ -64,7 +64,7 @@ public final class HIDTransport: DeviceTransport {
     }
 }
 
-/// Одно HID-устройство.
+/// One HID device.
 final class HIDChannel: DeviceChannel {
     let name = "HID"
     var onEvent: ((DeviceEvent) -> Void)?
@@ -87,7 +87,7 @@ final class HIDChannel: DeviceChannel {
         inputBuffer.deallocate()
     }
 
-    /// снять колбэк до того, как канал исчезнет
+    /// remove the callback before the channel goes away
     func invalidate() {
         guard registered else { return }
         registered = false

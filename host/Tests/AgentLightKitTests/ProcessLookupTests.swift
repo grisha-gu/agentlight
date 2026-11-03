@@ -15,7 +15,7 @@ final class ProcessLookupTests: XCTestCase {
     }
 
     func testEnvironmentOfOwnProcess() throws {
-        // у платформенных бинарников (/bin/sleep) macOS env не отдаёт, у claude — отдаёт
+        // macOS doesn't expose env for platform binaries (/bin/sleep), but does for claude
         let env = try XCTUnwrap(TerminalCapture.environment(of: getpid()))
         let mine = ProcessInfo.processInfo.environment
         XCTAssertFalse(env.isEmpty)

@@ -2,7 +2,7 @@ import AgentLightKit
 import AppKit
 import SwiftUI
 
-/// Окно «Настройки…»: правит ~/.agentlight/config.json через Daemon.updateConfig.
+/// The "Settings…" window: edits ~/.agentlight/config.json via Daemon.updateConfig.
 final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let daemon: Daemon
     private let model = SettingsModel()
@@ -23,22 +23,22 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.recent = recentProjectDirs()
         if window == nil {
             let host = NSHostingController(rootView: SettingsView(model: model))
-            host.sizingOptions = [.preferredContentSize]  // окно растёт, когда появляется ошибка или меню
+            host.sizingOptions = [.preferredContentSize]  // the window grows when an error or a menu appears
             let w = NSWindow(contentViewController: host)
             w.setContentSize(host.view.fittingSize)
-            w.title = "Настройки AgentLight"
+            w.title = String(localized: "AgentLight Settings")
             w.styleMask = [.titled, .closable]
             w.isReleasedWhenClosed = false
             w.delegate = self
             w.center()
             window = w
         }
-        // приложение .accessory — без activate окно откроется под чужими
+        // the app is .accessory — without activate the window opens behind others
         NSApp.activate(ignoringOtherApps: true)
         window?.makeKeyAndOrderFront(nil)
     }
 
-    /// Для `--snapshot`: Form рисуется только в настоящем окне, поэтому снимаем его, не показывая.
+    /// For `--snapshot`: a Form only draws in a real window, so capture it without showing it.
     func snapshot(to url: URL) {
         show()
         window?.orderOut(nil)
@@ -55,8 +55,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        panel.prompt = "Выбрать"
-        panel.message = "Где запускать нового агента по кнопке пустого светофора"
+        panel.prompt = String(localized: "Choose")
+        panel.message = String(localized: "Where to start a new agent from an empty traffic light's button")
         let current = (daemon.config.emptySlotButtonLaunches ?? "~") as NSString
         panel.directoryURL = URL(fileURLWithPath: current.expandingTildeInPath, isDirectory: true)
         guard let window else { return }
@@ -79,7 +79,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.slotCount = daemon.config.slotCount
     }
 
-    /// Каталоги агентов, что сейчас в слотах, — быстрый выбор без диалога.
+    /// Folders of the agents currently in slots — a quick pick without a dialog.
     private func recentProjectDirs() -> [String] {
         var seen = Set<String>()
         return daemon.allocator.slots.compactMap { $0.session?.cwd }
@@ -93,7 +93,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 }
 
 final class SettingsModel: ObservableObject {
-    /// nil — по умолчанию (домашний каталог)
+    /// nil — the default (home folder)
     @Published var launchDir: String?
     @Published var recent: [String] = []
     @Published var slotCount = Config().slotCount
@@ -110,42 +110,42 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Светофоры").font(.headline)
+            Text("Traffic Lights").font(.headline)
             GroupBox {
                 Stepper(value: Binding(get: { model.slotCount }, set: { model.onSlotCount($0) }),
                         in: Config.slotCountRange) {
-                    Text("Светофоров в приложении: \(model.slotCount)")
+                    Text("Traffic lights in the app: \(model.slotCount)")
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(6)
             }
-            Text("Одно устройство показывает 4 светофора. Второе подключённое — следующие 4, третье — ещё 4 и так далее. Светофоры, на которые устройства не хватило, видны только в строке меню.")
+            Text("One device shows 4 traffic lights. A second connected device shows the next 4, a third another 4, and so on. Traffic lights without a device are only visible in the menu bar.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Новый агент").font(.headline)
+            Text("New Agent").font(.headline)
                 .padding(.top, 8)
             GroupBox {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {
                         Image(systemName: "folder")
                             .foregroundStyle(.secondary)
-                        Text(model.launchDir ?? "~ (по умолчанию)")
+                        Text(model.launchDir ?? String(localized: "~ (default)"))
                             .font(.system(.body, design: .monospaced))
                             .lineLimit(1)
                             .truncationMode(.head)
                             .foregroundStyle(model.launchDir == nil ? .secondary : .primary)
-                            .help(model.launchDir ?? "домашний каталог")
+                            .help(model.launchDir ?? String(localized: "home folder"))
                         Spacer(minLength: 8)
                         if model.launchDir != nil {
-                            Button("Сбросить") { model.onResetLaunchDir() }
+                            Button("Reset") { model.onResetLaunchDir() }
                         }
-                        Button("Выбрать…") { model.onChooseLaunchDir() }
+                            Button("Choose…") { model.onChooseLaunchDir() }
                     }
                     let others = model.recent.filter { $0 != model.launchDir }
                     if !others.isEmpty {
-                        Menu("Взять папку одного из текущих агентов") {
+                        Menu("Use the folder of a current agent") {
                             ForEach(others, id: \.self) { dir in
                                 Button(dir) { model.onPick(dir) }
                             }
@@ -155,7 +155,7 @@ struct SettingsView: View {
                 }
                 .padding(6)
             }
-            Text("Кнопка под пустым светофором открывает окно Terminal и запускает в этой папке `claude`.")
+            Text("The button under an empty traffic light opens a Terminal window and runs `claude` in this folder.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)

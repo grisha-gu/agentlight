@@ -26,17 +26,17 @@ public struct HTTPResponse: Sendable {
     }
 }
 
-/// Минимальный HTTP/1.1 только на 127.0.0.1 (docs/05-host-macos.md §5.3):
-/// keep-alive обязателен, `POST /hook` отвечает 204 до какой-либо обработки, 5xx не бывает.
+/// Minimal HTTP/1.1, 127.0.0.1 only (docs/05-host-macos.md §5.3):
+/// keep-alive is required, `POST /hook` answers 204 before any processing, there are no 5xx.
 public final class HTTPServer: @unchecked Sendable {
     public typealias Handler = (HTTPRequest, @escaping (HTTPResponse) -> Void) -> Void
 
     private let port: UInt16
     private let queue = DispatchQueue(label: "agentlight.http")
     private var listener: NWListener?
-    /// `POST /hook`: тело отдаётся сюда уже после ответа 204
+    /// `POST /hook`: the body is handed here after the 204 has been sent
     public var onHook: ((Data) -> Void)?
-    /// всё остальное (`/status`, `/control`)
+    /// everything else (`/status`, `/control`)
     public var handler: Handler?
     public var onFailure: ((Error) -> Void)?
 
@@ -80,7 +80,7 @@ public final class HTTPServer: @unchecked Sendable {
         }
     }
 
-    /// Разобрать все целые запросы из буфера (несколько подряд в одном соединении).
+    /// Parse all complete requests from the buffer (several in a row on one connection).
     private func drain(_ c: NWConnection, _ buf: inout Data) {
         while let req = Self.parse(&buf) {
             if req.method == "POST" && req.path == "/hook" {
@@ -96,7 +96,7 @@ public final class HTTPServer: @unchecked Sendable {
         }
     }
 
-    /// nil — запрос ещё не пришёл целиком.
+    /// nil — the request hasn't fully arrived yet.
     static func parse(_ buf: inout Data) -> HTTPRequest? {
         guard let headerEnd = buf.range(of: Data("\r\n\r\n".utf8)) else { return nil }
         let head = String(decoding: buf[buf.startIndex..<headerEnd.lowerBound], as: UTF8.self)

@@ -1,5 +1,5 @@
-// Иконка AgentLight: голова, левая половина — схематичный робот, правая — светофор.
-//   swift scripts/make-icon.swift OUT_DIR   → OUT_DIR/AgentLight.icns и icon-1024.png
+// AgentLight icon: a head, the left half a schematic robot, the right half a traffic light.
+//   swift scripts/make-icon.swift OUT_DIR   → OUT_DIR/AgentLight.icns and icon-1024.png
 import AppKit
 
 let outDir = URL(fileURLWithPath: CommandLine.arguments.count > 1 ? CommandLine.arguments[1] : ".")
@@ -14,9 +14,9 @@ func gradient(_ ctx: CGContext, _ colors: [CGColor], from: CGPoint, to: CGPoint)
     ctx.drawLinearGradient(g, start: from, end: to, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
 }
 
-/// Рисуем в системе 1024×1024, начало координат снизу слева.
+/// Drawn in a 1024×1024 space, origin at the bottom left.
 func draw(_ ctx: CGContext) {
-    // Подложка по сетке macOS: 824×824, скругление ~185
+    // Backplate on the macOS grid: 824×824, corner radius ~185
     let plate = CGRect(x: 100, y: 100, width: 824, height: 824)
     let platePath = CGPath(roundedRect: plate, cornerWidth: 185, cornerHeight: 185, transform: nil)
     ctx.saveGState()
@@ -31,12 +31,12 @@ func draw(_ ctx: CGContext) {
     gradient(ctx, [color(0x2C3A55), color(0x141A28)], from: CGPoint(x: 512, y: 924), to: CGPoint(x: 512, y: 100))
     ctx.restoreGState()
 
-    // Голова
+    // Head
     let head = CGRect(x: 232, y: 236, width: 560, height: 520)
     let headPath = CGPath(roundedRect: head, cornerWidth: 130, cornerHeight: 130, transform: nil)
     let mid = head.midX
 
-    // Антенна (над левой половиной)
+    // Antenna (above the left half)
     ctx.setStrokeColor(color(0xB9C4D6))
     ctx.setLineWidth(18)
     ctx.setLineCap(.round)
@@ -48,13 +48,13 @@ func draw(_ ctx: CGContext) {
     ctx.fillEllipse(in: CGRect(x: 372 - 26, y: head.maxY + 62, width: 52, height: 52))
     ctx.setShadow(offset: .zero, blur: 0, color: nil)
 
-    // Ухо-болт слева
+    // Bolt ear on the left
     let ear = CGRect(x: head.minX - 46, y: head.midY - 70, width: 70, height: 140)
     ctx.addPath(CGPath(roundedRect: ear, cornerWidth: 26, cornerHeight: 26, transform: nil))
     ctx.setFillColor(color(0x8E9AB0))
     ctx.fillPath()
 
-    // Левая половина — металл робота
+    // Left half — robot metal
     ctx.saveGState()
     ctx.addPath(headPath)
     ctx.clip()
@@ -62,7 +62,7 @@ func draw(_ ctx: CGContext) {
     gradient(ctx, [color(0xE4EAF3), color(0xAEB9CC)], from: CGPoint(x: 0, y: head.maxY), to: CGPoint(x: 0, y: head.minY))
     ctx.restoreGState()
 
-    // Правая половина — чёрный корпус светофора
+    // Right half — black traffic light housing
     ctx.saveGState()
     ctx.addPath(headPath)
     ctx.clip()
@@ -70,14 +70,14 @@ func draw(_ ctx: CGContext) {
     gradient(ctx, [color(0x2A2F38), color(0x101318)], from: CGPoint(x: 0, y: head.maxY), to: CGPoint(x: 0, y: head.minY))
     ctx.restoreGState()
 
-    // Шов по середине
+    // Seam down the middle
     ctx.setStrokeColor(color(0x5C6880))
     ctx.setLineWidth(8)
     ctx.move(to: CGPoint(x: mid, y: head.minY + 6))
     ctx.addLine(to: CGPoint(x: mid, y: head.maxY - 6))
     ctx.strokePath()
 
-    // Глаз робота
+    // Robot eye
     let eyeC = CGPoint(x: 382, y: 560)
     ctx.setFillColor(color(0x1B2233))
     ctx.fillEllipse(in: CGRect(x: eyeC.x - 72, y: eyeC.y - 72, width: 144, height: 144))
@@ -88,7 +88,7 @@ func draw(_ ctx: CGContext) {
     ctx.setFillColor(color(0xFFFFFF, 0.85))
     ctx.fillEllipse(in: CGRect(x: eyeC.x - 30, y: eyeC.y + 6, width: 26, height: 26))
 
-    // Рот-решётка (левая половина)
+    // Grille mouth (left half)
     let mouth = CGRect(x: 292, y: 330, width: mid - 292 - 34, height: 74)
     ctx.addPath(CGPath(roundedRect: mouth, cornerWidth: 22, cornerHeight: 22, transform: nil))
     ctx.setFillColor(color(0x1B2233))
@@ -102,17 +102,17 @@ func draw(_ ctx: CGContext) {
     }
     ctx.strokePath()
 
-    // Правая половина — три огня с козырьками
+    // Right half — three lights with visors
     let lights: [(UInt32, Bool)] = [(0xFF4D4D, true), (0xFFC83D, true), (0x3DDC6A, true)]
     let r: CGFloat = 52
     let cx = mid + (head.maxX - mid) / 2 - 6
     let ys: [CGFloat] = [head.maxY - 106, head.midY, head.minY + 106]
     for (i, (hex, lit)) in lights.enumerated() {
         let c = CGPoint(x: cx, y: ys[i])
-        // гнездо
+        // socket
         ctx.setFillColor(color(0x05070A))
         ctx.fillEllipse(in: CGRect(x: c.x - r - 10, y: c.y - r - 10, width: 2 * (r + 10), height: 2 * (r + 10)))
-        // огонь
+        // light
         ctx.saveGState()
         if lit { ctx.setShadow(offset: .zero, blur: 46, color: color(hex, 0.95)) }
         ctx.setFillColor(color(hex, lit ? 1 : 0.28))
@@ -122,7 +122,7 @@ func draw(_ ctx: CGContext) {
             ctx.setFillColor(color(0xFFFFFF, 0.55))
             ctx.fillEllipse(in: CGRect(x: c.x - 30, y: c.y + 12, width: 26, height: 19))
         }
-        // козырёк сверху
+        // visor on top
         ctx.saveGState()
         ctx.addArc(center: c, radius: r + 20, startAngle: .pi * 0.12, endAngle: .pi * 0.88, clockwise: false)
         ctx.setStrokeColor(color(0x3A414D))

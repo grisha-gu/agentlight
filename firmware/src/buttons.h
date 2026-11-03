@@ -2,8 +2,8 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-// Кнопки слотов на GP12–GP15, к GND, внутренний pull-up.
-// Пока только дебаунс и событие «нажата»; жесты (long, double) — следующий шаг M2.
+// Slot buttons on GP12–GP15, to GND, internal pull-up.
+// Only debounce and a "pressed" event for now; gestures (long, double) are a later step.
 
 void buttons_init(void);
-bool buttons_poll(uint8_t *slot);   // true — слот нажат (по одному событию за вызов)
+bool buttons_poll(uint8_t *slot);   // true — a slot was pressed (one event per call)

@@ -12,8 +12,8 @@ void power_init(void) {
     gpio_init(POWER_PIN);
     gpio_set_dir(POWER_PIN, GPIO_IN);
     gpio_pull_up(POWER_PIN);
-    // 100 нФ заряжается через внутренний pull-up ~50 кОм: τ ≈ 5 мс. Дать уровню установиться,
-    // чтобы первый READY сообщил правильное положение без дебаунса.
+    // 100 nF charges through the internal ~50 kΩ pull-up: τ ≈ 5 ms. Let the level settle
+    // so the first READY reports the correct position without debouncing.
     sleep_ms(20);
     stable_on = raw_on = gpio_get(POWER_PIN);
 }

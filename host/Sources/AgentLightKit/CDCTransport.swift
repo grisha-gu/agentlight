@@ -1,18 +1,18 @@
 import Foundation
 
-/// ASCII-протокол по CDC (`/dev/cu.usbmodem*`), docs/03-protocol.md §3.4.
-/// Основной канал — HID; этот нужен, пока в прошивке нет HID, и для отладки.
-/// Порт признаётся нашим, только если на HELLO пришло `OK agentlight …`.
+/// ASCII protocol over CDC (`/dev/cu.usbmodem*`), docs/03-protocol.md §3.4.
+/// The main channel is HID; this one is for firmware without HID and for debugging.
+/// A port counts as ours only if it answered HELLO with `OK agentlight …`.
 public final class CDCTransport: DeviceTransport {
     public let name = "CDC"
     public var onAttach: ((DeviceChannel) -> Void)?
     public var onDetach: ((DeviceChannel) -> Void)?
 
     private let fixedPath: String?
-    /// открытые порты: и уже наши, и те, что ещё отвечают на HELLO
+    /// open ports: both confirmed ones and those still answering HELLO
     private var channels: [String: CDCChannel] = [:]
     private var scanTimer: Timer?
-    /// чужие порты, которые не ответили на HELLO, — не дёргать их каждые 2 с
+    /// foreign ports that didn't answer HELLO — don't poke them every 2 s
     private var rejected: [String: Date] = [:]
 
     public init(path: String? = nil) {
@@ -62,7 +62,7 @@ public final class CDCTransport: DeviceTransport {
             if wasReady {
                 self.onDetach?(ch)
             } else {
-                Log.info("CDC: \(p) не ответил как agentlight, пропускаю")
+                Log.info("CDC: \(p) didn't answer as agentlight, skipping")
                 self.rejected[p] = Date()
             }
         }
@@ -70,13 +70,13 @@ public final class CDCTransport: DeviceTransport {
     }
 }
 
-/// Один открытый CDC-порт.
+/// One open CDC port.
 final class CDCChannel: DeviceChannel {
     let name = "CDC"
     var onEvent: ((DeviceEvent) -> Void)?
-    /// порт ответил как agentlight
+    /// the port answered as agentlight
     var onReady: (() -> Void)?
-    /// порт закрыт; true — до этого был нашим
+    /// the port closed; true — it was ours before
     var onClose: ((Bool) -> Void)?
 
     let path: String
@@ -93,7 +93,7 @@ final class CDCChannel: DeviceChannel {
         var t = termios()
         tcgetattr(f, &t)
         cfmakeraw(&t)
-        // 1200 бод на RP2040 — сигнал «перезагрузись в BOOTSEL», держимся подальше
+        // 1200 baud on the RP2040 means "reboot into BOOTSEL", stay away from it
         cfsetspeed(&t, speed_t(B115200))
         t.c_cflag |= tcflag_t(CLOCAL | CREAD)
         tcsetattr(f, TCSANOW, &t)
@@ -119,7 +119,7 @@ final class CDCChannel: DeviceChannel {
         write(command.asciiLine)
     }
 
-    /// закрыть без колбэка (остановка транспорта)
+    /// close without the callback (transport shutdown)
     func close() { close(notify: false) }
 
     private func write(_ line: String) {
@@ -148,7 +148,7 @@ final class CDCChannel: DeviceChannel {
 
     private func handle(_ line: String) {
         guard let e = DeviceEvent(asciiLine: line) else {
-            // ранняя прошивка отвечает ERR на ещё не реализованные команды — раз в каждую
+            // early firmware answers ERR to commands it doesn't implement yet — once per command
             if line.hasPrefix("ERR"), seenErrors.insert(line).inserted { Log.warn("CDC: \(line)") }
             return
         }

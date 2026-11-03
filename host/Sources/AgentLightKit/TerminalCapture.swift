@@ -1,8 +1,8 @@
 import Darwin
 import Foundation
 
-/// Сбор идентичности терминала в `agentlight hook` (docs/05-host-macos.md §5.5).
-/// Хук — дочерний процесс Claude Code: env и дерево процессов — его.
+/// Collecting the terminal identity in `agentlight hook` (docs/05-host-macos.md §5.5).
+/// The hook is a child process of Claude Code: the env and process tree are its own.
 public enum TerminalCapture {
     static let shells: Set<String> = ["sh", "bash", "zsh", "dash", "fish", "agentlight", "env"]
 
@@ -10,8 +10,8 @@ public enum TerminalCapture {
         let pid = claudePid()
         var term = terminalRef(environment: env, tty: controllingTTY())
         if term.tty == nil, let pid { term.tty = tty(of: pid) }
-        // фоновая сессия под демоном Claude Code: её pty не окно — берём терминал вкладки,
-        // где её смотрят (кнопка всё равно пересчитает это в момент нажатия)
+        // a background session under the Claude Code daemon: its pty isn't a window — take the terminal of the tab
+        // where it's being watched (the button recomputes this at press time anyway)
         if let pid, let viewer = ClaudeSessions.viewer(of: pid, scanAttach: false).terminal { term = viewer }
         return HookExtras(claudePid: pid,
                           preferSlot: env["AGENTLIGHT_PREFER_SLOT"].flatMap { Int($0) },
@@ -39,8 +39,8 @@ public enum TerminalCapture {
         return String(cString: name)
     }
 
-    /// Первый предок, который не оболочка: Claude Code запускает command-хук через `sh -c`.
-    /// Имя процесса claude ненадёжно (нативная сборка называется версией, «2.1.3»).
+    /// First ancestor that isn't a shell: Claude Code runs the command hook via `sh -c`.
+    /// The claude process name is unreliable (the native build is named after its version, "2.1.3").
     public static func claudePid() -> Int32? {
         var pid = getppid()
         for _ in 0..<8 {
@@ -87,8 +87,8 @@ public enum TerminalCapture {
                         start: Date(timeIntervalSince1970: Double(t.tv_sec) + Double(t.tv_usec) / 1e6))
     }
 
-    /// Сессия без SessionStart (стартовала раньше демона или хуков): ищем процесс `claude`,
-    /// запущенный в cwd сессии или в его ближайшем предке. Неоднозначно — не угадываем.
+    /// A session without SessionStart (started before the daemon or hooks): look for a `claude` process
+    /// started in the session's cwd or its nearest ancestor. Ambiguous — don't guess.
     public static func locateClaude(cwd: String) -> (pid: Int32, tty: String?, cwd: String)? {
         let found: [(pid: Int32, cwd: String)] = allPids().compactMap { pid in
             guard isClaude(pid), let dir = Self.cwd(of: pid),
@@ -109,7 +109,7 @@ public enum TerminalCapture {
         return pids.prefix(Int(max(n, 0))).filter { $0 > 0 }
     }
 
-    /// Нативная сборка называется версией («2.1.295»), поэтому смотрим argv[0] и путь бинарника.
+    /// The native build is named after its version ("2.1.295"), so look at argv[0] and the binary path.
     static func isClaude(_ pid: Int32) -> Bool {
         if procInfo(pid)?.name == "claude" { return true }
         if let path = executablePath(pid), path.contains("/claude/versions/") || path.hasSuffix("/claude") {
@@ -126,7 +126,7 @@ public enum TerminalCapture {
         procArgs(pid)?.args
     }
 
-    /// Окружение чужого процесса того же пользователя (лежит в KERN_PROCARGS2 после argv).
+    /// Environment of another process of the same user (sits in KERN_PROCARGS2 after argv).
     static func environment(of pid: Int32) -> [String: String]? {
         guard let env = procArgs(pid)?.env else { return nil }
         var out: [String: String] = [:]
@@ -143,7 +143,7 @@ public enum TerminalCapture {
         guard sysctl(&mib, 3, nil, &size, nil, 0) == 0, size > 4 else { return nil }
         var buf = [UInt8](repeating: 0, count: size)
         guard sysctl(&mib, 3, &buf, &size, nil, 0) == 0, size > 4 else { return nil }
-        // argc (int32), затем путь exec, нули, потом argv[0..argc), затем env до пустой строки
+        // argc (int32), then the exec path, zeros, then argv[0..argc), then env up to an empty string
         let argc = buf.withUnsafeBytes { $0.loadUnaligned(as: Int32.self) }
         var i = 4
         while i < size && buf[i] != 0 { i += 1 }

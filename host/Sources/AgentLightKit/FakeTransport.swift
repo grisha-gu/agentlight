@@ -1,14 +1,14 @@
 import Foundation
 
-/// Устройство-заглушка: рисует 4 светофора ANSI-цветами в терминале (первое устройство,
-/// слоты 0..3), клавиши 1–4 — короткое нажатие кнопки, Shift+1–4 (!@#$) — долгое.
+/// Stub device: draws 4 traffic lights in ANSI colors in the terminal (the first device,
+/// slots 0..3), keys 1–4 — short button press, Shift+1–4 (!@#$) — long press.
 /// docs/05-host-macos.md §5.11.
 public final class FakeTransport: DeviceTransport, DeviceChannel {
     public let name = "fake"
     public var onEvent: ((DeviceEvent) -> Void)?
     public var onAttach: ((DeviceChannel) -> Void)?
     public var onDetach: ((DeviceChannel) -> Void)?
-    /// подписи под столбцами — имена проектов
+    /// captions under the columns — project names
     public var labels: () -> [String] = { [] }
 
     private var lights: [LightState] = Array(repeating: .off, count: DeviceLink.slotsPerDevice)
@@ -33,7 +33,7 @@ public final class FakeTransport: DeviceTransport, DeviceChannel {
             src.resume()
             stdinSource = src
         }
-        print("\u{1B}[?25l", terminator: "")  // спрятать курсор
+        print("\u{1B}[?25l", terminator: "")  // hide the cursor
         onAttach?(self)
         onEvent?(.ready(DeviceIdentity(proto: 1, slots: 4, firmware: "fake", uid: "FAKE"), powerOn: true))
         redrawTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in self?.draw() }
@@ -84,7 +84,7 @@ public final class FakeTransport: DeviceTransport, DeviceChannel {
 
     private func draw() {
         let now = Date()
-        // как настоящая железка: нет PING > 3 с — всё гаснет
+        // like the real hardware: no PING for > 3 s — everything goes dark
         let watchdog = now.timeIntervalSince(lastPing) > 3
         let colors = ["31", "33", "32"]  // R Y G
         let lit: [LightState] = [.attn, .busy, .idle]
@@ -95,7 +95,7 @@ public final class FakeTransport: DeviceTransport, DeviceChannel {
             for slot in 0..<4 {
                 var on = !watchdog && lights[slot] == lit[row]
                 if welcomeUntil[slot] > now {
-                    // волна сверху вниз, ~0.4 с на огонь
+                    // a wave top to bottom, ~0.4 s per light
                     on = Int((1.2 - welcomeUntil[slot].timeIntervalSince(now)) / 0.4) == row
                 }
                 out += on ? "│ \u{1B}[\(colors[row])m●\u{1B}[0m  │ " : "│ ○  │ "
@@ -106,7 +106,7 @@ public final class FakeTransport: DeviceTransport, DeviceChannel {
         out += "  " + lights.map { pad(watchdog ? "wd" : $0.name, 7) }.joined() + "\u{1B}[K\n"
         let l = labels()
         out += "  " + (0..<4).map { pad(l.indices.contains($0) ? l[$0] : "—", 7) }.joined() + "\u{1B}[K\n"
-        out += "  [1]    [2]    [3]    [4]    ← цифра = кнопка, Shift = долгое\u{1B}[K\n"
+        out += "  [1]    [2]    [3]    [4]    ← digit = button, Shift = long press\u{1B}[K\n"
         print(out, terminator: "")
         fflush(stdout)
         drawn = true

@@ -1,11 +1,11 @@
 import AgentLightKit
 import AppKit
 
-/// Выполняет цепочку TerminalFocus.Step в фоне: osascript — отдельный процесс, поэтому
-/// диалог TCC «AgentLight хочет управлять Terminal» не замораживает демон и строку меню.
+/// Runs a TerminalFocus.Step chain in the background: osascript is a separate process, so
+/// the TCC dialog "AgentLight wants to control Terminal" doesn't freeze the daemon and the menu bar.
 final class FocusRunner {
     private let queue = DispatchQueue(label: "agentlight.focus")
-    /// под launchd PATH минимальный — tmux ищем сами
+    /// under launchd PATH is minimal — find tmux ourselves
     private static let tmuxCandidates = ["/opt/homebrew/bin/tmux", "/usr/local/bin/tmux", "/usr/bin/tmux"]
 
     func focus(_ s: SessionRecord, order: [String], done: @escaping (String) -> Void) {
@@ -13,7 +13,7 @@ final class FocusRunner {
         let name = s.projectName
         queue.async {
             let result = Self.run(steps)
-            Log.info("фокус \(name): \(result)")
+            Log.info("focus \(name): \(result)")
             DispatchQueue.main.async { done(result) }
         }
     }
@@ -22,53 +22,53 @@ final class FocusRunner {
         let cmd = TerminalFocus.launchCommand(cwd: cwd, slot: slot)
         queue.async {
             let r = Self.osascript(TerminalFocus.terminalRunScript, [cmd])
-            Log.info("новый агент в слот \(slot) (\(cwd)): \(r.ok ? "ok" : r.output)")
+            Log.info("new agent in slot \(slot) (\(cwd)): \(r.ok ? "ok" : r.output)")
         }
     }
 
-    /// Фоновая сессия, которую ни одна вкладка не показывает: `claude attach` в новом окне.
-    /// Второй экран той же сессии безопасен — attach только показывает, не перехватывает.
+    /// A background session no tab is showing: `claude attach` in a new window.
+    /// A second screen on the same session is safe — attach only shows it, doesn't take it over.
     func attach(job: String, cwd: String?, name: String, done: @escaping (String) -> Void) {
         let cmd = TerminalFocus.attachCommand(cwd: cwd, job: job)
         queue.async {
             let r = Self.osascript(TerminalFocus.terminalRunScript, [cmd])
-            let result = r.ok ? "фоновая сессия без окна — открыл claude attach \(job)" : "attach: \(r.output)"
-            Log.info("фокус \(name): \(result)")
+            let result = r.ok ? "background session without a window — opened claude attach \(job)" : "attach: \(r.output)"
+            Log.info("focus \(name): \(result)")
             DispatchQueue.main.async { done(result) }
         }
     }
 
     private static func run(_ steps: [TerminalFocus.Step]) -> String {
-        guard !steps.isEmpty else { return "нечем фокусировать: нет tty и терминал неизвестен" }
+        guard !steps.isEmpty else { return "nothing to focus: no tty and unknown terminal" }
         var clientTTY: String?
         var log: [String] = []
         for step in steps {
             switch step {
             case .tmux(let pane, let socket):
                 guard let tty = tmux(pane: pane, socket: socket) else {
-                    log.append("tmux: не вышло")
+                    log.append("tmux: failed")
                     continue
                 }
                 clientTTY = tty
-                log.append("tmux: \(pane) → клиент \(tty)")
+                log.append("tmux: \(pane) → client \(tty)")
             case .terminalTab(let tty):
                 guard let tty = clientTTY ?? tty else { continue }
                 let r = osascript(TerminalFocus.terminalTabScript, [tty])
-                if r.ok && r.output == "ok" { return (log + ["Terminal: вкладка \(tty)"]).joined(separator: "; ") }
-                log.append("Terminal: \(r.output.isEmpty ? "ошибка" : r.output) (\(tty))")
+                if r.ok && r.output == "ok" { return (log + ["Terminal: tab \(tty)"]).joined(separator: "; ") }
+                log.append("Terminal: \(r.output.isEmpty ? "error" : r.output) (\(tty))")
             case .activateApp(let bundleId):
-                if activate(bundleId) { return (log + ["вывел вперёд \(bundleId)"]).joined(separator: "; ") }
-                log.append("\(bundleId) не запущен")
+                if activate(bundleId) { return (log + ["brought \(bundleId) to front"]).joined(separator: "; ") }
+                log.append("\(bundleId) not running")
             case .resume(let cwd, let sid):
                 let r = osascript(TerminalFocus.terminalRunScript, [TerminalFocus.resumeCommand(cwd: cwd, sessionId: sid)])
-                if r.ok { return (log + ["агент мёртв — открыл claude --resume"]).joined(separator: "; ") }
+                if r.ok { return (log + ["agent is dead — opened claude --resume"]).joined(separator: "; ") }
                 log.append("resume: \(r.output)")
             }
         }
         return log.joined(separator: "; ")
     }
 
-    /// Переключить окно и панель tmux; вернуть tty клиента, который на неё смотрит.
+    /// Switch the tmux window and pane; return the tty of the client looking at it.
     private static func tmux(pane: String, socket: String?) -> String? {
         guard let bin = tmuxCandidates.first(where: FileManager.default.isExecutableFile) else { return nil }
         let sock = socket.map { ["-S", $0] } ?? []
@@ -97,7 +97,7 @@ final class FocusRunner {
     private static func osascript(_ script: String, _ args: [String]) -> (ok: Bool, output: String) {
         let r = exec("/usr/bin/osascript", ["-"] + args, stdin: script)
         if !r.ok, r.output.contains("-1743") {
-            Log.warn("нет разрешения Automation → Terminal: Системные настройки → Конфиденциальность → Автоматизация → AgentLight")
+            Log.warn("no Automation → Terminal permission: System Settings → Privacy & Security → Automation → AgentLight")
         }
         return r
     }

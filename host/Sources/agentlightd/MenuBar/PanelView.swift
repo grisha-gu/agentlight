@@ -13,13 +13,13 @@ struct SlotView: Identifiable, Equatable {
     var isEmpty: Bool { project == nil }
 
     var caption: String {
-        if isEmpty { return "свободен" }
-        if muted { return "заглушен" }
+        if isEmpty { return String(localized: "free", comment: "slot caption: no agent") }
+        if muted { return String(localized: "muted", comment: "slot caption") }
         switch light {
         case .off: return "—"
-        case .idle: return "готов"
-        case .busy: return "думает"
-        case .attn: return "ждёт тебя"
+        case .idle: return String(localized: "ready", comment: "slot caption: green light")
+        case .busy: return String(localized: "thinking", comment: "slot caption: yellow light")
+        case .attn: return String(localized: "needs you", comment: "slot caption: red light")
         }
     }
 }
@@ -42,8 +42,8 @@ struct PanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // ряд — четвёрка одного устройства; неполный ряд добит пустыми местами,
-            // чтобы столбцы стояли друг под другом
+            // a row is one device's four; an incomplete row is padded with empty space
+            // so the columns line up
             ForEach(Array(stride(from: 0, to: model.slots.count, by: DeviceLink.slotsPerDevice)), id: \.self) { start in
                 let row = model.slots[start..<min(start + DeviceLink.slotsPerDevice, model.slots.count)]
                 HStack(alignment: .top, spacing: 12) {
@@ -56,7 +56,7 @@ struct PanelView: View {
                 }
             }
             if !model.overflow.isEmpty {
-                Text("Без светофора: " + model.overflow.joined(separator: ", "))
+                Text("No traffic light: \(model.overflow.joined(separator: ", "))")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -71,10 +71,10 @@ struct PanelView: View {
                     .lineLimit(1)
                 Spacer()
                 Menu {
-                    Button("Настройки…") { model.onSettings() }
-                    Button("Проверить огни") { model.onTest() }
+                    Button("Settings…") { model.onSettings() }
+                    Button("Test Lights") { model.onTest() }
                     Divider()
-                    Button("Выйти из AgentLight") { NSApp.terminate(nil) }
+                    Button("Quit AgentLight") { NSApp.terminate(nil) }
                 } label: {
                     Image(systemName: "ellipsis.circle")
                 }
@@ -117,13 +117,13 @@ struct SlotColumn: View {
                     .font(.system(size: 12, weight: .semibold, design: .rounded))
                     .frame(width: 34, height: 20)
             }
-            .help(slot.isEmpty ? "Запустить нового агента в этом слоте" : "Перейти в терминал агента")
+            .help(slot.isEmpty ? String(localized: "Start a new agent in this slot") : String(localized: "Go to the agent's terminal"))
         }
         .frame(maxWidth: .infinity)
         .contextMenu {
             if !slot.isEmpty {
-                Button(slot.muted ? "Включить светофор" : "Заглушить") { model.onMute(slot.index) }
-                Button("Освободить слот") { model.onRelease(slot.index) }
+                Button(slot.muted ? String(localized: "Unmute") : String(localized: "Mute")) { model.onMute(slot.index) }
+                Button("Release Slot") { model.onRelease(slot.index) }
             }
         }
     }

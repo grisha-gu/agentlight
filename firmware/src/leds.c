@@ -7,14 +7,14 @@
 #include "hardware/gpio.h"
 #include "hardware/pwm.h"
 
-// 14 бит: 125 МГц / 16384 ≈ 7.6 кГц — мерцания не видно и на камеру. 12 бит (30.5 кГц)
-// давали видимые ступени в самом низу затухания: 1 → 2 отсчёта из 4095 — это скачок яркости вдвое.
+// 14 bits: 125 MHz / 16384 ≈ 7.6 kHz — no flicker, even on camera. 12 bits (30.5 kHz)
+// gave visible steps at the very bottom of a fade: 1 → 2 counts out of 4095 doubles the brightness.
 #define PWM_WRAP  16383
 #define GAMMA     2.2f
 
 static const float LED_CAL[3] = LED_CAL_INIT;
 
-// Уровни во float до самого PWM: гамма и LED_CAL без промежуточного округления до 8 бит.
+// Levels stay float all the way to PWM: gamma and LED_CAL without intermediate rounding to 8 bits.
 static float fb[LED_COUNT];
 static float master = 1.0f;
 

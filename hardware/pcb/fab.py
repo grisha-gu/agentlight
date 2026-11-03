@@ -1,7 +1,7 @@
-"""Файлы для JLCPCB: Gerber + сверловка (zip), BOM и CPL для PCBA обратной стороны.
+"""Files for JLCPCB: Gerber + drill (zip), BOM and CPL for back-side PCBA.
 
-Запуск питоном из KiCad после gen_board.py. Результат — build/jlc/.
-Светодиоды, модуль и крепёж помечены hand (gen_board.py) — в BOM/CPL их нет, паяются вручную.
+Run with KiCad's python after gen_board.py. Output goes to build/jlc/.
+LEDs, the module and mounting hardware are marked hand (gen_board.py) — they're not in the BOM/CPL, they're hand-soldered.
 """
 import collections
 import csv
@@ -33,7 +33,7 @@ shutil.make_archive(os.path.join(OUT, "agentlight-gerbers"), "zip", gerbers)
 board = pcbnew.LoadBoard(PCB)
 
 def natural(ref):
-    """R2 перед R10 — чтобы позиции на странице завода было легко сверять."""
+    """R2 before R10 — so positions are easy to cross-check on the factory page."""
     m = re.match(r"([A-Z]+)(\d+)", ref)
     return (m.group(1), int(m.group(2)))
 
@@ -41,7 +41,7 @@ def natural(ref):
 parts = sorted((fp for fp in board.GetFootprints() if not fp.IsExcludedFromBOM()),
                key=lambda f: natural(f.GetReference()))
 
-# BOM: одна строка на номинал + футпринт.
+# BOM: one row per value + footprint.
 groups = collections.OrderedDict()
 for fp in parts:
     lcsc = fp.GetFieldText("LCSC") if fp.HasField("LCSC") else ""
@@ -53,9 +53,9 @@ with open(os.path.join(OUT, "agentlight-bom.csv"), "w", newline="") as f:
     for (value, footprint, lcsc), refs in groups.items():
         w.writerow([value, ",".join(refs), footprint, lcsc])
 
-# Футпринты JLC (EasyEDA) центрированы и повёрнуты не так, как наши: центр детали в локальных
-# координатах нашего футпринта (до переворота на обратную сторону) и добавка к повороту.
-# Найдено подгонкой площадок из EasyEDA к площадкам на плате (2026-10-28); SOT-23, 0805 совпадают и так.
+# JLC (EasyEDA) footprints are centered and rotated differently from ours: the part center in the local
+# coordinates of our footprint (before flipping to the back side) and a rotation offset.
+# Found by fitting EasyEDA pads to the board pads (2026-10-28); SOT-23 and 0805 match as is.
 JLC_FIX = {
     "PinSocket_1x08_P2.54mm_Vertical": ((0, 3.5 * 2.54), -90),
     "PinSocket_1x07_P2.54mm_Vertical": ((0, 3 * 2.54), -90),
@@ -65,7 +65,7 @@ JLC_FIX = {
 
 
 def jlc_place(fp):
-    """Центр и поворот детали так, как их понимает JLCPCB."""
+    """Part center and rotation as JLCPCB understands them."""
     (lx, ly), drot = JLC_FIX.get(fp.GetFPID().GetLibItemName().wx_str(), ((0, 0), 0))
     if fp.IsFlipped():
         ly = -ly
@@ -76,7 +76,7 @@ def jlc_place(fp):
     return x, y, (fp.GetOrientationDegrees() + drot) % 360
 
 
-# CPL: координаты от левого нижнего угла платы, Y вверх (как ждёт JLCPCB).
+# CPL: coordinates from the board's bottom left corner, Y up (as JLCPCB expects).
 bb = board.GetBoardEdgesBoundingBox()
 x0, y0 = bb.GetLeft(), bb.GetBottom()
 with open(os.path.join(OUT, "agentlight-cpl.csv"), "w", newline="") as f:
@@ -90,4 +90,4 @@ with open(os.path.join(OUT, "agentlight-cpl.csv"), "w", newline="") as f:
 print(OUT)
 for name in sorted(os.listdir(OUT)):
     print(" ", name)
-print(" ", len(parts), "деталей в PCBA,", len(groups), "позиций BOM")
+print(" ", len(parts), "parts in PCBA,", len(groups), "BOM lines")

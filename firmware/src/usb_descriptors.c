@@ -1,11 +1,11 @@
-// Composite: vendor HID (рабочий канал, docs/03-protocol.md §3.3) + CDC (отладка, ASCII §3.4).
+// Composite: vendor HID (main channel, docs/03-protocol.md §3.3) + CDC (debugging, ASCII §3.4).
 
 #include <string.h>
 
 #include "pico/unique_id.h"
 #include "tusb.h"
 
-// На время разработки — VID/PID Pico SDK (docs/03-protocol.md §3.1); хост матчит по usage page.
+// During development — Pico SDK VID/PID (docs/03-protocol.md §3.1); the host matches by usage page.
 #define USB_VID 0x2E8A
 #define USB_PID 0x000A
 #define USB_BCD 0x0200
@@ -26,7 +26,7 @@ static const tusb_desc_device_t desc_device = {
     .bLength            = sizeof(tusb_desc_device_t),
     .bDescriptorType    = TUSB_DESC_DEVICE,
     .bcdUSB             = USB_BCD,
-    // IAD нужен CDC внутри composite
+    // CDC inside a composite device needs an IAD
     .bDeviceClass       = TUSB_CLASS_MISC,
     .bDeviceSubClass    = MISC_SUBCLASS_COMMON,
     .bDeviceProtocol    = MISC_PROTOCOL_IAD,
@@ -40,7 +40,7 @@ static const tusb_desc_device_t desc_device = {
     .bNumConfigurations = 1,
 };
 
-// Usage page 0xFF00, usage 0x01: 64 байта IN + 64 байта OUT, без report ID.
+// Usage page 0xFF00, usage 0x01: 64 bytes IN + 64 bytes OUT, no report ID.
 static const uint8_t desc_hid_report[] = {
     TUD_HID_REPORT_DESC_GENERIC_INOUT(REPORT_SIZE)
 };
@@ -82,7 +82,7 @@ uint16_t const *tud_descriptor_string_cb(uint8_t index, uint16_t langid) {
     case STR_MANUFACTURER: str = "AgentLight"; break;
     case STR_PRODUCT:      str = "AgentLight"; break;
     case STR_SERIAL:
-        // Serial = uid флеша: хост различает два устройства (docs/03-protocol.md §3.1)
+        // Serial = flash uid: lets the host tell two devices apart (docs/03-protocol.md §3.1)
         pico_get_unique_board_id_string(serial, sizeof serial);
         str = serial;
         break;

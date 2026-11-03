@@ -32,8 +32,8 @@ target_link_libraries(agentlight
     tinyusb_device
 )
 
-# USB-стек свой (composite HID + CDC, src/usb_descriptors.c). printf по CDC и перезагрузка
-# в BOOTSEL на 1200 бод остаются за pico_stdio_usb; при своём TinyUSB последнюю надо включить явно.
+# Our own USB stack (composite HID + CDC, src/usb_descriptors.c). printf over CDC and the 1200-baud
+# reboot into BOOTSEL stay with pico_stdio_usb; with a custom TinyUSB the latter has to be enabled explicitly.
 pico_enable_stdio_usb(agentlight 1)
 target_compile_definitions(agentlight PRIVATE PICO_STDIO_USB_ENABLE_RESET_VIA_BAUD_RATE=1)
 pico_enable_stdio_uart(agentlight 0)

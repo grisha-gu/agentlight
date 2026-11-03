@@ -1,9 +1,9 @@
 import Foundation
 
-/// Merge наших хуков в `~/.claude/settings.json` и их удаление (docs/05-host-macos.md §5.4).
-/// Чужие хуки не трогаются; свои узнаются по URL демона и по команде `agentlight hook`.
+/// Merges our hooks into `~/.claude/settings.json` and removes them (docs/05-host-macos.md §5.4).
+/// Other hooks are left alone; ours are recognized by the daemon URL and the `agentlight hook` command.
 public struct HookInstaller {
-    /// Всё, кроме SessionStart, — http: форк процесса на каждый PreToolUse слишком дорог.
+    /// Everything except SessionStart is http: forking a process on every PreToolUse is too expensive.
     public static let httpEvents = [
         "UserPromptSubmit", "PreToolUse", "PostToolUse", "PostToolUseFailure",
         "PermissionRequest", "PermissionDenied", "Notification", "Elicitation",
@@ -26,7 +26,7 @@ public struct HookInstaller {
             groups.append(["hooks": [hook]])
             hooks[event] = groups
         }
-        // command — потому что SessionStart нужен env терминала (tty, TERM_PROGRAM, pid claude)
+        // command, because SessionStart needs the terminal env (tty, TERM_PROGRAM, claude pid)
         add("SessionStart", ["type": "command", "command": command, "async": true, "timeout": 5])
         for e in Self.httpEvents {
             add(e, ["type": "http", "url": url, "async": true, "timeout": 2])
@@ -54,7 +54,7 @@ public struct HookInstaller {
         return s
     }
 
-    /// События, на которых стоят наши хуки.
+    /// Events our hooks are installed on.
     public static func installedEvents(in settings: [String: Any]) -> Set<String> {
         guard let hooks = settings["hooks"] as? [String: Any] else { return [] }
         var found: Set<String> = []
@@ -83,7 +83,7 @@ public struct HookInstaller {
         return false
     }
 
-    // MARK: - Файл
+    // MARK: - File
 
     public static func load(_ url: URL) throws -> [String: Any] {
         guard FileManager.default.fileExists(atPath: url.path) else { return [:] }
@@ -95,7 +95,7 @@ public struct HookInstaller {
         return obj
     }
 
-    /// С резервной копией рядом: settings.json — чужой файл, портить его нельзя.
+    /// With a backup next to it: settings.json is someone else's file, it must not get corrupted.
     public static func save(_ settings: [String: Any], to url: URL) throws {
         if FileManager.default.fileExists(atPath: url.path) {
             let backup = url.appendingPathExtension("agentlight-backup")

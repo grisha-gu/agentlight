@@ -2,7 +2,7 @@
   "buttons": {
     "date": "2026-10-23",
     "fw": "0.4.1",
-    "note": "4 кнопки, ложных нет",
+    "note": "4 buttons, no false triggers",
     "status": "ok"
   },
   "camera": {
@@ -20,13 +20,13 @@
   "current": {
     "date": "2026-10-26",
     "fw": "0.5.0",
-    "note": "не мерили",
+    "note": "not measured",
     "status": "skip"
   },
   "errors": {
     "date": "2026-10-27",
     "fw": "0.6.0",
-    "note": "34 невалидных команд",
+    "note": "34 invalid commands",
     "status": "ok"
   },
   "fade": {
@@ -62,7 +62,7 @@
   "power": {
     "date": "2026-10-27",
     "fw": "0.6.0",
-    "note": "выкл/вкл, кнопки молчат",
+    "note": "off/on, buttons silent",
     "status": "ok"
   },
   "raw-order": {
@@ -86,7 +86,7 @@
   "stress": {
     "date": "2026-10-27",
     "fw": "0.6.0",
-    "note": "1000 команд за 5.0 с (200/с)",
+    "note": "1000 commands in 5.0 s (200/s)",
     "status": "ok"
   },
   "stress-visual": {
@@ -98,7 +98,7 @@
   "watchdog": {
     "date": "2026-10-27",
     "fw": "0.6.0",
-    "note": "!WD trip через 2.98 с, один раз",
+    "note": "!WD trip after 2.98 s, once",
     "status": "ok"
   },
   "welcome": {

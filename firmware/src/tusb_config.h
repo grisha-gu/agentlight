@@ -1,10 +1,10 @@
 #pragma once
 
-// Как и в tusb_config.h самого SDK: reset_interface.c (1200 бод → BOOTSEL) берёт отсюда свои дефолты.
+// Same as the SDK's own tusb_config.h: reset_interface.c (1200 baud → BOOTSEL) takes its defaults from here.
 #include "pico/stdio_usb.h"
 
-// TinyUSB поднимает прошивка сама (composite HID + CDC, usb_descriptors.c);
-// pico_stdio_usb при этом продолжает возить printf по CDC и ловить 1200 бод → BOOTSEL.
+// The firmware brings up TinyUSB itself (composite HID + CDC, usb_descriptors.c);
+// pico_stdio_usb still carries printf over CDC and catches 1200 baud → BOOTSEL.
 
 #define CFG_TUSB_RHPORT0_MODE  OPT_MODE_DEVICE
 #define CFG_TUSB_OS            OPT_OS_PICO

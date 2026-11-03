@@ -2,6 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>en</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>en</string>
+        <string>ru</string>
+    </array>
     <key>CFBundleIdentifier</key>
     <string>dev.grisha-gu.agentlight</string>
     <key>CFBundleName</key>
@@ -23,6 +30,6 @@
     <key>LSUIElement</key>
     <true/>
     <key>NSAppleEventsUsageDescription</key>
-    <string>AgentLight переключает на окно терминала агента по нажатию кнопки.</string>
+    <string>AgentLight switches to the agent's terminal window when you press a button.</string>
 </dict>
 </plist>

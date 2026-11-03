@@ -1,14 +1,14 @@
 import Foundation
 
-/// Одно физическое устройство, видимое через один транспорт. Колбэки — на главной очереди.
+/// One physical device, seen through one transport. Callbacks run on the main queue.
 public protocol DeviceChannel: AnyObject {
     var name: String { get }
     var onEvent: ((DeviceEvent) -> Void)? { get set }
     func send(_ command: DeviceCommand)
 }
 
-/// Способ найти устройства (HID, CDC, заглушка). Устройств может быть несколько.
-/// Все колбэки — на главной очереди.
+/// A way to find devices (HID, CDC, stub). There may be several devices.
+/// All callbacks run on the main queue.
 public protocol DeviceTransport: AnyObject {
     var name: String { get }
     var onAttach: ((DeviceChannel) -> Void)? { get set }
@@ -17,26 +17,28 @@ public protocol DeviceTransport: AnyObject {
     func stop()
 }
 
-/// Heartbeat, ресинк и раскладка слотов по устройствам (docs/05-host-macos.md §5.8, docs/03-protocol.md §3.5).
-/// Каждое устройство показывает свою четвёрку слотов: первое подключённое — 0..3, второе — 4..7 и т. д.
-/// Одно устройство может быть видно сразу через HID и CDC — узнаём его по uid из READY
-/// и говорим с ним через транспорт, что раньше в списке.
+/// Heartbeat, resync and laying out slots across devices (docs/05-host-macos.md §5.8, docs/03-protocol.md §3.5).
+/// Each device shows its own four slots: the first connected one 0..3, the second 4..7, and so on.
+/// One device may be visible via both HID and CDC — we recognize it by the uid from READY
+/// and talk to it through whichever transport comes first in the list.
 public final class DeviceLink {
     public static let slotsPerDevice = 4
 
-    /// Устройство, которому идут команды.
+    /// The device commands go to.
     public struct Device: Equatable, Sendable {
         public var name: String
         public var identity: DeviceIdentity
         public var bank: Int
-        /// выключатель на задней стенке: в «выкл» прошивка сама гасит огни и глушит кнопки
+        /// power switch on the back wall: when "off" the firmware itself dims the lights and mutes the buttons
         public var powerOn: Bool
         public var slots: Range<Int> { bank * DeviceLink.slotsPerDevice..<(bank + 1) * DeviceLink.slotsPerDevice }
+        /// slots as numbered on the buttons: "1–4", "5–8"
+        public var slotRangeText: String { "\(slots.lowerBound + 1)–\(slots.upperBound)" }
     }
 
     private final class Attached {
         let channel: DeviceChannel
-        /// индекс транспорта: меньше — приоритетнее
+        /// transport index: lower wins
         let rank: Int
         var identity: DeviceIdentity?
         var powerOn = true
@@ -46,7 +48,7 @@ public final class DeviceLink {
             self.rank = rank
         }
 
-        /// ключ физического устройства; без uid каждый канал — отдельное устройство
+        /// physical device key; without a uid every channel is a separate device
         var key: String? {
             identity.map { $0.uid.isEmpty ? "channel-\(ObjectIdentifier(channel).hashValue)" : $0.uid }
         }
@@ -54,16 +56,16 @@ public final class DeviceLink {
 
     public private(set) var transports: [DeviceTransport]
     public var onButton: ((Int, ButtonGesture) -> Void)?
-    /// подключение, READY, смена раскладки — для UI
+    /// connect, READY, layout change — for the UI
     public var onStatusChange: (() -> Void)?
 
     public var brightness: UInt8
     public var flags: (busyPulse: Bool, idlePulse: Bool)
     private var lights: [LightState] = []
     private var attached: [Attached] = []
-    /// устройство → банк, пока оно подключено
+    /// device → bank, while it's connected
     private var banks: [String: Int] = [:]
-    /// прошлый банк устройства: переподключённое встаёт на своё место, если оно свободно
+    /// the device's previous bank: a reconnected device takes its old place if it's free
     private var lastBank: [String: Int] = [:]
     private var paused = false
     private var pingSeq: UInt32 = 0
@@ -79,7 +81,7 @@ public final class DeviceLink {
         }
     }
 
-    /// подключённые устройства, по возрастанию банка
+    /// connected devices, by ascending bank
     public var devices: [Device] {
         primaries.compactMap { a in
             guard let id = a.identity, let key = a.key, let bank = banks[key] else { return nil }
@@ -90,22 +92,46 @@ public final class DeviceLink {
 
     public var isConnected: Bool { !attached.isEmpty }
 
-    /// подключено и ни одно устройство не выключено переключателем
+    /// connected, and no device is switched off
     public var isActive: Bool { isConnected && devices.allSatisfy(\.powerOn) }
 
-    public var statusText: String {
+    /// What the device line in the UI and in `/status` says.
+    public enum Status: Equatable, Sendable {
+        case disconnected
+        /// a channel is open, READY hasn't arrived yet
+        case connecting(String)
+        /// one device, switched off with the power switch
+        case switchedOff(Device)
+        case single(Device)
+        /// several devices, or one that isn't in bank 0
+        case several([Device])
+    }
+
+    public var status: Status {
         let ds = devices
         switch ds.count {
         case 0:
-            guard let a = attached.first else { return "устройство не подключено" }
-            return "\(a.channel.name): подключено"
+            guard let a = attached.first else { return .disconnected }
+            return .connecting(a.channel.name)
         case 1 where ds[0].bank == 0 && !ds[0].powerOn:
-            return "\(ds[0].name): выключено"
+            return .switchedOff(ds[0])
         case 1 where ds[0].bank == 0:
-            return "\(ds[0].name): fw \(ds[0].identity.firmware), uid \(ds[0].identity.uid)"
+            return .single(ds[0])
         default:
-            let list = ds.map { "\($0.name) \($0.slots.lowerBound + 1)–\($0.slots.upperBound)" + ($0.powerOn ? "" : " (выкл)") }
-            return "устройств: \(ds.count) — " + list.joined(separator: ", ")
+            return .several(ds)
+        }
+    }
+
+    /// `status` in English — for `/status` and the CLI; the menu bar localizes `status` itself.
+    public var statusText: String {
+        switch status {
+        case .disconnected: return "device not connected"
+        case .connecting(let name): return "\(name): connected"
+        case .switchedOff(let d): return "\(d.name): switched off"
+        case .single(let d): return "\(d.name): fw \(d.identity.firmware), uid \(d.identity.uid)"
+        case .several(let ds):
+            let list = ds.map { "\($0.name) \($0.slotRangeText)" + ($0.powerOn ? "" : " (off)") }
+            return "devices: \(ds.count) — " + list.joined(separator: ", ")
         }
     }
 
@@ -120,7 +146,7 @@ public final class DeviceLink {
         transports.forEach { $0.stop() }
     }
 
-    /// Огни всех слотов приложения; каждое устройство получает свою четвёрку.
+    /// Lights for all of the app's slots; each device gets its own four.
     public func show(_ lights: [LightState]) {
         guard lights != self.lights else { return }
         self.lights = lights
@@ -128,7 +154,7 @@ public final class DeviceLink {
         for a in primaries { a.channel.send(.setAll(slice(for: a))) }
     }
 
-    /// nil — волна на всех устройствах
+    /// nil — wave on all devices
     public func welcome(slot: Int?) {
         guard !paused else { return }
         guard let slot else { return broadcast(.welcome(slot: nil)) }
@@ -138,12 +164,12 @@ public final class DeviceLink {
         }
     }
 
-    /// Команда всем подключённым устройствам.
+    /// Command to all connected devices.
     public func broadcast(_ cmd: DeviceCommand) {
         for a in primaries { a.channel.send(cmd) }
     }
 
-    /// Сон: погасить всё и перестать слать PING — железки честно останутся тёмными.
+    /// Sleep: turn everything off and stop sending PING — the hardware honestly stays dark.
     public func pause() {
         broadcast(.setAll(Self.dark))
         paused = true
@@ -158,11 +184,11 @@ public final class DeviceLink {
         primaries.forEach(resync)
     }
 
-    // MARK: - Внутреннее
+    // MARK: - Internals
 
     private static let dark = Array(repeating: LightState.off, count: slotsPerDevice)
 
-    /// по одному каналу на устройство — с самым приоритетным транспортом
+    /// one channel per device — via the highest-priority transport
     private var primaries: [Attached] {
         var best: [String: Attached] = [:]
         for a in attached {
@@ -200,26 +226,26 @@ public final class DeviceLink {
 
     private func attach(_ ch: DeviceChannel, rank: Int) {
         guard !attached.contains(where: { $0.channel === ch }) else { return }
-        Log.info("\(ch.name): подключено")
+        Log.info("\(ch.name): connected")
         let a = Attached(channel: ch, rank: rank)
         attached.append(a)
         ch.onEvent = { [weak self, weak a] e in
             guard let self, let a else { return }
             self.handle(e, from: a)
         }
-        // слоты устройству даём по uid из READY
+        // slots are assigned to a device by the uid from READY
         ch.send(.hello)
         onStatusChange?()
     }
 
     private func detach(_ ch: DeviceChannel) {
         guard let i = attached.firstIndex(where: { $0.channel === ch }) else { return }
-        Log.info("\(ch.name): отключено")
+        Log.info("\(ch.name): disconnected")
         let key = attached.remove(at: i).key
         ch.onEvent = nil
         if let key {
             if let next = primaries.first(where: { $0.key == key }) {
-                resync(next)  // то же устройство осталось на другом транспорте
+                resync(next)  // the same device is still there on another transport
             } else {
                 banks.removeValue(forKey: key)
             }
@@ -242,7 +268,7 @@ public final class DeviceLink {
         switch e {
         case .ready(let id, let powerOn):
             if id.proto > DeviceEvent.supportedProto {
-                Log.error("\(t.name): прошивка говорит proto=\(id.proto), хост знает только \(DeviceEvent.supportedProto) — обнови agentlight")
+                Log.error("\(t.name): firmware says proto=\(id.proto), host only knows \(DeviceEvent.supportedProto) — update agentlight")
             }
             let isNew = a.identity != id
             a.identity = id
@@ -250,7 +276,7 @@ public final class DeviceLink {
             let bank = assignBank(a.key!)
             if isNew {
                 let n = Self.slotsPerDevice
-                Log.info("\(t.name): READY fw=\(id.firmware) uid=\(id.uid) slots=\(id.slots) power=\(powerOn ? "on" : "off") → слоты \(bank * n)..\(bank * n + n - 1)")
+                Log.info("\(t.name): READY fw=\(id.firmware) uid=\(id.uid) slots=\(id.slots) power=\(powerOn ? "on" : "off") → slots \(bank * n)..\(bank * n + n - 1)")
             }
             if isPrimary(a) { resync(a) }
             onStatusChange?()
@@ -261,13 +287,13 @@ public final class DeviceLink {
             if tripped, isPrimary(a) { resync(a) }
         case .watchdogTrip:
             guard isPrimary(a) else { return }
-            Log.warn("\(t.name): watchdog железки сработал, ресинк")
+            Log.warn("\(t.name): hardware watchdog tripped, resync")
             resync(a)
         case .power(let on):
-            // Огни и кнопки прошивка гасит сама и состояния продолжает принимать — ресинк не нужен.
+            // The firmware itself dims lights and mutes buttons, and keeps accepting states — no resync needed.
             guard a.powerOn != on else { return }
             a.powerOn = on
-            Log.info("\(t.name): выключатель — \(on ? "вкл" : "выкл")")
+            Log.info("\(t.name): power switch — \(on ? "on" : "off")")
             onStatusChange?()
         case .log(let s):
             Log.info("fw: \(s)")

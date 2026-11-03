@@ -13,7 +13,7 @@ final class ConfigTests: XCTestCase {
         try? FileManager.default.removeItem(at: url)
     }
 
-    /// Настройки из UI пишутся через load → правка → save: ручные поля не должны теряться.
+    /// Settings from the UI are written via load → edit → save: hand-edited fields must not get lost.
     func testSaveKeepsOtherFields() throws {
         try Data(#"{"port": 48880, "pins": {"~/work": 2}, "brightness": 40}"#.utf8).write(to: url)
         var c = try Config.load(from: url)

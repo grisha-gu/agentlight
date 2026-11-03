@@ -1,7 +1,7 @@
 import Foundation
 
-/// Тело хука Claude Code. Обязательны только `hook_event_name` и `session_id`:
-/// всё остальное опционально, незнакомые поля игнорируются (docs/05-host-macos.md §5.3).
+/// Claude Code hook body. Only `hook_event_name` and `session_id` are required:
+/// everything else is optional, unknown fields are ignored (docs/05-host-macos.md §5.3).
 public struct HookEvent: Decodable, Equatable, Sendable {
     public var name: String
     public var sessionId: String
@@ -14,7 +14,7 @@ public struct HookEvent: Decodable, Equatable, Sendable {
     public var reason: String?
     /// `PreCompact`/`PostCompact`: manual | auto
     public var trigger: String?
-    /// Дописывается `agentlight hook` для `SessionStart` (command-хук).
+    /// Added by `agentlight hook` for `SessionStart` (command hook).
     public var agentlight: HookExtras?
 
     public init(name: String, sessionId: String, cwd: String? = nil) {
@@ -55,7 +55,7 @@ public struct HookEvent: Decodable, Equatable, Sendable {
     }
 }
 
-/// То, чего нет в HTTP-payload, но что `agentlight hook` достаёт из окружения терминала.
+/// What the HTTP payload lacks but `agentlight hook` picks up from the terminal environment.
 public struct HookExtras: Codable, Equatable, Sendable {
     public var claudePid: Int32?
     public var preferSlot: Int?
@@ -74,10 +74,10 @@ public struct HookExtras: Codable, Equatable, Sendable {
     }
 }
 
-/// Идентичность терминала агента — для фокуса по кнопке (docs/05-host-macos.md §5.5).
+/// The agent's terminal identity — for focusing it from a button (docs/05-host-macos.md §5.5).
 public struct TerminalRef: Codable, Equatable, Sendable {
     public var termProgram: String?
-    /// `__CFBundleIdentifier` — приложение, из которого запущен шелл (com.apple.Terminal, …)
+    /// `__CFBundleIdentifier` — the app the shell was launched from (com.apple.Terminal, …)
     public var appBundleId: String?
     public var itermSessionId: String?
     public var tmuxPane: String?

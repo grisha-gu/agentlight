@@ -1,0 +1,41 @@
+/* Russian UI strings. Keys are the English source strings from the Swift code. */
+
+/* Panel: slot captions */
+"free" = "свободен";
+"muted" = "заглушен";
+"ready" = "готов";
+"thinking" = "думает";
+"needs you" = "ждёт тебя";
+
+/* Panel */
+"No traffic light: %@" = "Без светофора: %@";
+"Settings…" = "Настройки…";
+"Test Lights" = "Проверить огни";
+"Quit AgentLight" = "Выйти из AgentLight";
+"Start a new agent in this slot" = "Запустить нового агента в этом слоте";
+"Go to the agent's terminal" = "Перейти в терминал агента";
+"Unmute" = "Включить светофор";
+"Mute" = "Заглушить";
+"Release Slot" = "Освободить слот";
+
+/* Panel: device line */
+"Device not connected" = "Устройство не подключено";
+"%@: connected" = "%@: подключено";
+"%@: switched off" = "%@: выключено";
+"%@ %@ (off)" = "%1$@ %2$@ (выкл)";
+"Devices: %lld — %@" = "Устройств: %1$lld — %2$@";
+
+/* Settings */
+"AgentLight Settings" = "Настройки AgentLight";
+"Traffic Lights" = "Светофоры";
+"Traffic lights in the app: %lld" = "Светофоров в приложении: %lld";
+"One device shows 4 traffic lights. A second connected device shows the next 4, a third another 4, and so on. Traffic lights without a device are only visible in the menu bar." = "Одно устройство показывает 4 светофора. Второе подключённое — следующие 4, третье — ещё 4 и так далее. Светофоры, на которые устройства не хватило, видны только в строке меню.";
+"New Agent" = "Новый агент";
+"~ (default)" = "~ (по умолчанию)";
+"home folder" = "домашний каталог";
+"Reset" = "Сбросить";
+"Choose…" = "Выбрать…";
+"Choose" = "Выбрать";
+"Use the folder of a current agent" = "Взять папку одного из текущих агентов";
+"Where to start a new agent from an empty traffic light's button" = "Где запускать нового агента по кнопке пустого светофора";
+"The button under an empty traffic light opens a Terminal window and runs `claude` in this folder." = "Кнопка под пустым светофором открывает окно Terminal и запускает в этой папке `claude`.";

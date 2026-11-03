@@ -2,7 +2,7 @@ import AgentLightKit
 import AppKit
 import SwiftUI
 
-/// Иконка в строке меню: мини-светофоры всех слотов; по клику — popover с крупными светофорами.
+/// Menu bar icon: mini traffic lights for all slots; click opens a popover with large ones.
 final class StatusItemController: NSObject {
     private let daemon: Daemon
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -16,7 +16,7 @@ final class StatusItemController: NSObject {
         self.daemon = daemon
         super.init()
         model.onPress = { [weak self, weak daemon] slot in
-            self?.popover.performClose(nil)  // окно терминала сейчас выйдет вперёд
+            self?.popover.performClose(nil)  // the terminal window is about to come to the front
             daemon?.button(slot: slot, .press)
         }
         model.onMute = { [weak daemon] slot in daemon?.button(slot: slot, .long) }
@@ -28,7 +28,7 @@ final class StatusItemController: NSObject {
         }
 
         popover.behavior = .transient
-        // высота зависит от числа рядов (slot_count) — popover берёт размер у SwiftUI
+        // height depends on the number of rows (slot_count) — the popover takes its size from SwiftUI
         panel.sizingOptions = [.preferredContentSize]
         popover.contentViewController = panel
 
@@ -62,11 +62,11 @@ final class StatusItemController: NSObject {
                      muted: s.muted)
         }
         model.overflow = daemon.allocator.overflow.map(\.projectName)
-        model.device = daemon.link.statusText
+        model.device = daemon.link.status.localizedText
         model.deviceConnected = daemon.link.isActive
         item.button?.image = MenuBarIcon.image(lights: lights, welcomeRows: model.slots.map(\.welcomeRow))
 
-        // пока идёт welcome-анимация, перерисовываем 10 раз в секунду
+        // while the welcome animation runs, redraw 10 times a second
         let animating = daemon.welcomeUntil.values.contains { $0 > now }
         if animating, animationTimer == nil {
             animationTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in self?.refresh() }
@@ -76,7 +76,7 @@ final class StatusItemController: NSObject {
         }
     }
 
-    /// Отладка без доступа к экрану: иконка и popover в PNG.
+    /// Debugging without screen access: icon and popover to PNG.
     @MainActor
     func snapshot(to dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
@@ -101,7 +101,7 @@ final class StatusItemController: NSObject {
         try? rep.representation(using: .png, properties: [:])?.write(to: url)
     }
 
-    /// Волна сверху вниз за 1.2 с: какой огонь сейчас горит (0 — красный).
+    /// A top-to-bottom wave over 1.2 s: which light is lit now (0 — red).
     static func welcomeRow(until: Date, now: Date) -> Int? {
         let left = until.timeIntervalSince(now)
         guard left > 0 else { return nil }
@@ -118,7 +118,7 @@ enum MenuBarIcon {
 
     static func image(lights: [LightState], welcomeRows: [Int?]) -> NSImage {
         let d: CGFloat = 4.5, gapY: CGFloat = 1.3, gapX: CGFloat = 2.5
-        // четвёрки (по устройству) разделены чуть шире
+        // groups of four (per device) are spaced a bit wider
         let groupGap: CGFloat = 2.5
         let n = lights.count
         func x(_ slot: Int) -> CGFloat {
@@ -140,5 +140,27 @@ enum MenuBarIcon {
         }
         img.isTemplate = false
         return img
+    }
+}
+
+extension DeviceLink.Status {
+    /// `DeviceLink.statusText` in the user's language.
+    var localizedText: String {
+        switch self {
+        case .disconnected:
+            return String(localized: "Device not connected")
+        case .connecting(let name):
+            return String(localized: "\(name): connected", comment: "device name: connected, waiting for READY")
+        case .switchedOff(let d):
+            return String(localized: "\(d.name): switched off", comment: "device name: power switch is off")
+        case .single(let d):
+            return "\(d.name): fw \(d.identity.firmware), uid \(d.identity.uid)"
+        case .several(let ds):
+            let list = ds.map { d in
+                d.powerOn ? "\(d.name) \(d.slotRangeText)"
+                    : String(localized: "\(d.name) \(d.slotRangeText) (off)", comment: "device name, slot range, power switch is off")
+            }
+            return String(localized: "Devices: \(ds.count) — \(list.joined(separator: ", "))")
+        }
     }
 }

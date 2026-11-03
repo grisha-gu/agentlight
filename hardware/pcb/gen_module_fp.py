@@ -1,15 +1,15 @@
-"""RP2040-Zero: пины (PINS) и контур модуля для платы.
+"""RP2040-Zero: pins (PINS) and the module outline for the board.
 
-Пины — 2 × 9 по бокам + 5 на нижнем торце (GP9–GP13); на плате это три гнезда J1–J3, их паяет
-завод. Футпринт RP2040-Zero_Outline — только контур и метка USB, чтобы модуль было видно.
-Вид на модуль сверху, USB-C вверху; на плате ставится на обратную сторону (flip).
-Координаты сверены с dj505/RP2040-Zero-KiCAD и CountParadox/RP2040-Zero-Kicad:
-ряды через 15.24 мм, шаг 2.54, нижний ряд на одной линии с последними боковыми пинами.
-Номера пинов 1–23 и их GPIO — PINS ниже, порядок как у символа dj505.
+Pins — 2 × 9 on the sides + 5 on the bottom end (GP9–GP13); on the board these are three sockets J1–J3, soldered
+by the factory. The RP2040-Zero_Outline footprint is just the outline and a USB mark, so the module is visible.
+Top view of the module, USB-C at the top; on the board it goes on the back side (flip).
+Coordinates checked against dj505/RP2040-Zero-KiCAD and CountParadox/RP2040-Zero-Kicad:
+rows 15.24 mm apart, 2.54 pitch, bottom row in line with the last side pins.
+Pin numbers 1–23 and their GPIOs — PINS below, ordered like the dj505 symbol.
 """
 import os
 
-# номер → имя, (x, y) от центра модуля; центр = середина между рядами на уровне 5-го пина
+# number → name, (x, y) from the module center; center = midway between the rows at the level of pin 5
 PINS = {}
 for i, name in enumerate(["5V", "GND", "3V3", "GP29", "GP28", "GP27", "GP26", "GP15", "GP14"]):
     PINS[i + 1] = (name, -7.62, -10.16 + 2.54 * i)
@@ -37,10 +37,10 @@ out = ['(footprint "RP2040-Zero_Outline"\n\t(version 20240108)\n\t(generator "ag
        '\t(attr exclude_from_pos_files exclude_from_bom allow_missing_courtyard)\n']
 out.append(text("reference", "REF**", -15.2, "F.SilkS"))
 out.append(text("value", "RP2040-Zero", 0, "F.Fab"))
-# модуль 18.16 × 23.88, USB-C выступает на 1.78 за верхний край
+# module 18.16 × 23.88, USB-C sticks out 1.78 past the top edge
 out.append(rect(-9.08, -11.94, 9.08, 11.94, "F.Fab", 0.1))
 out.append(rect(-4.5, -13.72, 4.5, -8.4, "F.Fab", 0.1))
-out.append(line(-2, -13.2, 2, -13.2, "F.SilkS", 0.12))   # метка «здесь USB»
+out.append(line(-2, -13.2, 2, -13.2, "F.SilkS", 0.12))   # "USB here" mark
 
 if __name__ == "__main__":
     path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "agentlight.pretty", "RP2040-Zero_Outline.kicad_mod")

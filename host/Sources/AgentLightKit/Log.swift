@@ -1,7 +1,7 @@
 import Foundation
 
-/// Простой лог в stderr (под launchd он уходит в ~/.agentlight/agentlightd.log)
-/// или прямо в файл, когда терминал занят рендером --fake-device.
+/// Simple log to stderr (under launchd it goes to ~/.agentlight/agentlightd.log)
+/// or straight to a file when the terminal is busy rendering --fake-device.
 public enum Log {
     nonisolated(unsafe) public static var fileHandle: FileHandle?
     private static let lock = NSLock()

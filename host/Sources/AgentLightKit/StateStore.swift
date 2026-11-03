@@ -1,6 +1,6 @@
 import Foundation
 
-/// Персистентность привязок: `~/.agentlight/state.json`, атомарная запись.
+/// Binding persistence: `~/.agentlight/state.json`, atomic writes.
 public struct StateStore: Sendable {
     public let url: URL
 

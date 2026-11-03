@@ -3,9 +3,9 @@ import XCTest
 @testable import AgentLightKit
 
 final class ClaudeSessionsTests: XCTestCase {
-    // как в ~/.claude/sessions на 2.1.316 (лишние поля урезаны)
+    // as in ~/.claude/sessions on 2.1.316 (extra fields trimmed)
     let parked = #"{"pid":93193,"sessionId":"afcf5dfd-d44e","kind":"interactive","status":"idle","parkedJobId":"d662e5ff"}"#
-    let fork = #"{"pid":76609,"sessionId":"2748614f-ca8e","kind":"bg","name":"Публикация проекта в brew","jobId":"d662e5ff","status":"idle"}"#
+    let fork = #"{"pid":76609,"sessionId":"2748614f-ca8e","kind":"bg","name":"Publish the project to brew","jobId":"d662e5ff","status":"idle"}"#
     let spare = #"{"pid":81348,"sessionId":"9a8cdd56-f8ea","kind":"bg","name":"9a8cdd56","jobId":"9a8cdd56","spare":true}"#
     let plain = #"{"pid":77507,"sessionId":"64e1ad2d-6c1b","kind":"interactive","status":"busy"}"#
 
@@ -30,14 +30,14 @@ final class ClaudeSessionsTests: XCTestCase {
     func testHidden() throws {
         let r = try registry()
         let noArgs: (Int32) -> [String]? = { _ in nil }
-        XCTAssertTrue(r.isHidden(93193, arguments: noArgs), "вкладка-оболочка")
-        XCTAssertTrue(r.isHidden(81348, arguments: noArgs), "заготовка в agent view")
-        XCTAssertFalse(r.isHidden(76609, arguments: noArgs), "фоновая сессия с задачей")
+        XCTAssertTrue(r.isHidden(93193, arguments: noArgs), "shell tab")
+        XCTAssertTrue(r.isHidden(81348, arguments: noArgs), "agent view spare")
+        XCTAssertFalse(r.isHidden(76609, arguments: noArgs), "background session with a job")
         XCTAssertFalse(r.isHidden(77507, arguments: noArgs))
-        // заготовка ещё не занята: файла нет, решает argv
+        // the spare isn't claimed yet: no file, argv decides
         XCTAssertTrue(r.isHidden(500, arguments: { _ in ["claude", "bg-spare", "--bg-spare", "/tmp/x.sock"] }))
         XCTAssertFalse(r.isHidden(500, arguments: { _ in ["claude"] }))
-        // занятая и отданная под задачу заготовка: argv прежний, но файл решает
+        // a spare that was claimed and given a job: argv is the same, but the file decides
         var e = r.entries[81348]!
         e.spare = false
         let dispatched = ClaudeSessions(entries: [e.pid: e])
@@ -59,7 +59,7 @@ final class ClaudeSessionsTests: XCTestCase {
         XCTAssertNil(ClaudeSessions.attachArgument(["claude", "attach"]))
         XCTAssertTrue(ClaudeSessions.attachTarget("d662e5ff", matches: e))
         XCTAssertTrue(ClaudeSessions.attachTarget("2748614f", matches: e))
-        XCTAssertTrue(ClaudeSessions.attachTarget("публикация", matches: e))
+        XCTAssertTrue(ClaudeSessions.attachTarget("publish", matches: e))
         XCTAssertFalse(ClaudeSessions.attachTarget("9a8cdd56", matches: e))
         XCTAssertFalse(ClaudeSessions.attachTarget("", matches: e))
     }

@@ -1,20 +1,20 @@
 import Foundation
 
-/// Хвост transcript-файла сессии: ищет отметку прерывания.
+/// Tail of a session's transcript file: looks for the interruption marker.
 ///
-/// Esc на вопросе или запросе разрешения, как и Esc посреди хода, не шлёт ни одного хука:
-/// Claude Code только дописывает в transcript строку пользователя с текстом
+/// Esc on a question or permission prompt, like Esc mid-turn, sends no hook at all:
+/// Claude Code only appends a user line to the transcript with the text
 /// `[Request interrupted by user]` / `[Request interrupted by user for tool use]`.
-/// Без неё светофор так и горел бы красным (или жёлтым) до следующего промпта.
+/// Without it the traffic light would stay red (or yellow) until the next prompt.
 public struct TranscriptTail: Sendable {
     static let marker = "[Request interrupted by user"
     private static let markerBytes = Data(marker.utf8)
-    /// строка без перевода строки на конце — дописывается следующим куском
+    /// a line without a trailing newline — completed by the next chunk
     private var pending = Data()
 
     public init() {}
 
-    /// Скормить дописанные байты. true — среди целых строк есть отметка прерывания.
+    /// Feed appended bytes. true — one of the complete lines has the interruption marker.
     public mutating func feed(_ data: Data) -> Bool {
         pending.append(data)
         var found = false
@@ -23,12 +23,12 @@ public struct TranscriptTail: Sendable {
             if !found, line.range(of: Self.markerBytes) != nil, Self.isInterrupt(line) { found = true }
             pending = Data(pending[pending.index(after: nl)...])
         }
-        // огромный результат инструмента без конца строки — не копим бесконечно
+        // a huge tool result without a line break — don't accumulate forever
         if pending.count > 16 << 20 { pending = Data() }
         return found
     }
 
-    /// Строка пользователя, где отметка — сам текст сообщения, а не кусок вывода инструмента.
+    /// A user line where the marker is the message text itself, not part of tool output.
     static func isInterrupt(_ line: Data) -> Bool {
         guard let obj = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
               obj["type"] as? String == "user",

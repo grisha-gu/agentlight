@@ -15,8 +15,8 @@ void status_led_init(void) {
 }
 
 void status_led_set(uint8_t r, uint8_t g, uint8_t b) {
-    // Обычный WS2812 ждёт GRB, но на RP2040-Zero пользователя стоит вариант с порядком RGB
-    // (проверено 2026-10-23: «зелёный» по GRB горел красным). Старшим битом вперёд, 24 бита в верхней части слова.
+    // A regular WS2812 expects GRB, but the user's RP2040-Zero has the RGB-order variant
+    // (checked 2026-10-23: "green" in GRB lit up red). MSB first, 24 bits in the top of the word.
     uint32_t rgb = ((uint32_t)r << 16) | ((uint32_t)g << 8) | b;
     pio_sm_put_blocking(pio, sm, rgb << 8u);
 }

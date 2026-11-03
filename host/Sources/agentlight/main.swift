@@ -2,29 +2,29 @@ import AgentLightKit
 import Foundation
 
 let usage = """
-agentlight — управление AgentLight
+agentlight — control AgentLight
 
-  install-hooks [--settings PATH]   дописать хуки в ~/.claude/settings.json (чужие не трогаются)
-  uninstall-hooks [--settings PATH] убрать ровно свои хуки
-  install-daemon                    LaunchAgent для AgentLight.app, запуск
-  uninstall-daemon                  остановить и убрать LaunchAgent
-  status                            слоты, состояния, проекты, pid, терминалы
-  doctor                            проверить демон, хуки, устройство
-  test                              прогнать все состояния на устройстве и в строке меню
-  selftest                          анимация самопроверки устройства
-  focus <slot>                      то же, что короткое нажатие кнопки
-  mute <slot>                       то же, что долгое нажатие
-  release <slot>                    освободить слот
-  pin <slot> [path]                 закрепить проект (по умолчанию текущий каталог) за слотом
+  install-hooks [--settings PATH]   add hooks to ~/.claude/settings.json (other hooks are left alone)
+  uninstall-hooks [--settings PATH] remove exactly our own hooks
+  install-daemon                    LaunchAgent for AgentLight.app, start it
+  uninstall-daemon                  stop and remove the LaunchAgent
+  status                            slots, states, projects, pids, terminals
+  doctor                            check the daemon, hooks, device
+  test                              run through all states on the device and in the menu bar
+  selftest                          device self-test animation
+  focus <slot>                      same as a short button press
+  mute <slot>                       same as a long press
+  release <slot>                    free the slot
+  pin <slot> [path]                 pin a project (current directory by default) to a slot
   unpin [path]
   brightness <0-255>
   replay <file.jsonl> [--live] [--speed N]
-                                    прогнать записанные хуки через стейт-машину (или в живой демон)
+                                    run recorded hooks through the state machine (or into the live daemon)
   logs [-f]
-  hook                              внутреннее: SessionStart-хук, stdin → демон
+  hook                              internal: SessionStart hook, stdin → daemon
 
-Слоты нумеруются с 0 (кнопки на устройстве — с 1). Слотов `slot_count` из config.json
-(по умолчанию 4): первое устройство показывает 0..3, второе — 4..7 и т. д.
+Slots are numbered from 0 (device buttons from 1). There are `slot_count` slots from config.json
+(4 by default): the first device shows 0..3, the second 4..7, and so on.
 """
 
 func fail(_ msg: String, code: Int32 = 1) -> Never {
@@ -59,13 +59,13 @@ func flag(_ name: String) -> Bool {
 func slotArg() -> Int {
     let count = loadConfig().slotCount
     guard let s = argv.first.flatMap({ Int($0) }), (0..<count).contains(s) else {
-        fail("нужен номер слота 0..\(count - 1)")
+        fail("slot number 0..\(count - 1) required")
     }
     argv.removeFirst()
     return s
 }
 
-// MARK: - Демон по HTTP
+// MARK: - Daemon over HTTP
 
 enum Daemon {
     static func request(_ method: String, _ path: String, body: Data? = nil, timeout: TimeInterval = 2) -> Data? {
@@ -93,9 +93,9 @@ enum Daemon {
     }
 
     static func control(_ c: ControlRequest) {
-        // фокус может ждать диалог TCC «AgentLight хочет управлять Terminal»
+        // focus may be waiting on the TCC dialog "AgentLight wants to control Terminal"
         guard let data = request("POST", "/control", body: try! JSONEncoder().encode(c), timeout: 30) else {
-            fail("демон не отвечает (agentlight doctor)")
+            fail("daemon isn't responding (agentlight doctor)")
         }
         let reply = try? JSONDecoder().decode(ControlReply.self, from: data)
         print(reply?.message ?? "ok")
@@ -103,10 +103,10 @@ enum Daemon {
     }
 }
 
-// MARK: - Пути
+// MARK: - Paths
 
-/// Путь к самому CLI, с раскрытыми симлинками (/usr/local/bin/agentlight → бандл).
-/// argv[0] не годится: при запуске через PATH там просто «agentlight».
+/// Path to the CLI itself, with symlinks resolved (/usr/local/bin/agentlight → bundle).
+/// argv[0] won't do: when run via PATH it's just "agentlight".
 var cliPath: String {
     let url = Bundle.main.executableURL ?? URL(fileURLWithPath: CommandLine.arguments[0])
     return url.resolvingSymlinksInPath().path
@@ -118,7 +118,7 @@ var settingsURL: URL {
 }
 
 let agentLabel = "dev.grisha-gu.agentlight.daemon"
-/// до 0.2.0 (bundle id com.agentlight.app); install-daemon его убирает
+/// before 0.2.0 (bundle id com.agentlight.app); install-daemon removes it
 let legacyAgentLabel = "com.agentlight.daemon"
 
 func launchAgentURL(_ label: String = agentLabel) -> URL {
@@ -139,10 +139,10 @@ func run(_ tool: String, _ args: [String], quiet: Bool = false) -> Int32 {
     return p.terminationStatus
 }
 
-// MARK: - Команды
+// MARK: - Commands
 
 func hook() {
-    // никогда не падать и не шуметь: любая ошибка здесь — шум в логе агента
+    // never fail and never make noise: any error here is noise in the agent's log
     let input = FileHandle.standardInput.readDataToEndOfFile()
     guard var obj = (try? JSONSerialization.jsonObject(with: input)) as? [String: Any] else { exit(0) }
     let extras = TerminalCapture.extras()
@@ -164,12 +164,12 @@ func installHooks() {
     } catch {
         fail("\(url.path): \(error)")
     }
-    print("хуки записаны в \(url.path) (резервная копия: settings.json.agentlight-backup)")
+    print("hooks written to \(url.path) (backup: settings.json.agentlight-backup)")
     print("SessionStart → \(installer.command)")
-    print("ещё \(HookInstaller.httpEvents.count) событий → \(installer.url)")
-    print("Claude Code подхватит их на лету, перезапуск сессий не нужен.")
+    print("\(HookInstaller.httpEvents.count) more events → \(installer.url)")
+    print("Claude Code picks them up on the fly, no need to restart sessions.")
     if !cliPath.contains(".app/Contents/MacOS/") {
-        print("⚠️  CLI запущен не из AgentLight.app — путь в SessionStart поменяется после пересборки.")
+        print("⚠️  CLI isn't running from AgentLight.app — the SessionStart path will change after a rebuild.")
     }
 }
 
@@ -181,14 +181,14 @@ func uninstallHooks() {
     } catch {
         fail("\(url.path): \(error)")
     }
-    print("хуки AgentLight убраны из \(url.path)")
+    print("AgentLight hooks removed from \(url.path)")
 }
 
 func installDaemon() {
     let cli = URL(fileURLWithPath: cliPath)
     let daemon = cli.deletingLastPathComponent().appendingPathComponent("agentlightd")
     guard cli.path.contains(".app/Contents/MacOS/"), FileManager.default.isExecutableFile(atPath: daemon.path) else {
-        fail("запускай из AgentLight.app (host/scripts/build-app.sh --install), сейчас: \(cli.path)")
+        fail("run it from AgentLight.app (host/scripts/build-app.sh --install), now: \(cli.path)")
     }
     try? FileManager.default.createDirectory(at: Paths.home, withIntermediateDirectories: true)
     let plist: [String: Any] = [
@@ -211,20 +211,20 @@ func installDaemon() {
     if FileManager.default.fileExists(atPath: launchAgentURL(legacyAgentLabel).path) {
         run("/bin/launchctl", ["bootout", "\(domain)/\(legacyAgentLabel)"], quiet: true)
         try? FileManager.default.removeItem(at: launchAgentURL(legacyAgentLabel))
-        print("старый LaunchAgent \(legacyAgentLabel) убран")
+        print("old LaunchAgent \(legacyAgentLabel) removed")
     }
     run("/bin/launchctl", ["bootout", "\(domain)/\(agentLabel)"], quiet: true)
     guard run("/bin/launchctl", ["bootstrap", domain, launchAgentURL().path]) == 0 else {
-        fail("launchctl bootstrap не прошёл")
+        fail("launchctl bootstrap failed")
     }
-    print("LaunchAgent установлен: \(launchAgentURL().path)")
-    print("демон: \(daemon.path), лог: \(Paths.log.path)")
+    print("LaunchAgent installed: \(launchAgentURL().path)")
+    print("daemon: \(daemon.path), log: \(Paths.log.path)")
 }
 
 func uninstallDaemon() {
     run("/bin/launchctl", ["bootout", "gui/\(getuid())/\(agentLabel)"], quiet: true)
     try? FileManager.default.removeItem(at: launchAgentURL())
-    print("LaunchAgent убран")
+    print("LaunchAgent removed")
 }
 
 let lightGlyph: [LightState: String] = [
@@ -242,8 +242,8 @@ func describe(_ s: SessionRecord) -> String {
 
 func status() {
     guard let st = Daemon.status() else {
-        print("демон не отвечает. Последнее сохранённое состояние (\(Paths.state.path)):")
-        guard let a = StateStore().load() else { return print("  нет") }
+        print("daemon isn't responding. Last saved state (\(Paths.state.path)):")
+        guard let a = StateStore().load() else { return print("  none") }
         for (i, s) in a.slots.enumerated() {
             print("  \(i)  \(lightGlyph[s.light]!)  \(s.session.map(describe) ?? "—")")
         }
@@ -252,15 +252,15 @@ func status() {
     print("agentlightd \(st.version), pid \(st.pid) — \(st.device)")
     for s in st.slots {
         var line = "  \(s.slot)  \(lightGlyph[s.light]!)  \(s.session.map(describe) ?? "—")"
-        if s.muted { line += "  [заглушен]" }
-        if s.rebinding { line += "  [ждёт /clear]" }
+        if s.muted { line += "  [muted]" }
+        if s.rebinding { line += "  [waiting for /clear]" }
         print(line)
     }
     for s in st.overflow {
-        print("  ·  без светофора: \(describe(s))  (\(s.state.name))")
+        print("  ·  no traffic light: \(describe(s))  (\(s.state.name))")
     }
     for s in st.background ?? [] {
-        print("  ·  скрыта (заготовка или вкладка-оболочка): \(describe(s))  (\(s.state.name))")
+        print("  ·  hidden (spare or shell tab): \(describe(s))  (\(s.state.name))")
     }
 }
 
@@ -273,21 +273,21 @@ func doctor() {
     let config = loadConfig()
 
     let st = Daemon.status()
-    check(st != nil, "демон отвечает на 127.0.0.1:\(config.port) (v\(st?.version ?? ""), pid \(st?.pid ?? 0))",
-          "демон не отвечает на 127.0.0.1:\(config.port) — `agentlight install-daemon` или запусти agentlightd руками")
+    check(st != nil, "daemon responds on 127.0.0.1:\(config.port) (v\(st?.version ?? ""), pid \(st?.pid ?? 0))",
+          "daemon doesn't respond on 127.0.0.1:\(config.port) — `agentlight install-daemon` or start agentlightd by hand")
 
     let agentInstalled = FileManager.default.fileExists(atPath: launchAgentURL().path)
     let agentLoaded = run("/bin/launchctl", ["print", "gui/\(getuid())/\(agentLabel)"], quiet: true) == 0
-    check(agentInstalled && agentLoaded, "LaunchAgent установлен и загружен",
-          agentInstalled ? "LaunchAgent есть, но не загружен — `agentlight install-daemon`"
-                         : "LaunchAgent не установлен — `agentlight install-daemon` (демон не стартует при входе)")
+    check(agentInstalled && agentLoaded, "LaunchAgent installed and loaded",
+          agentInstalled ? "LaunchAgent exists but isn't loaded — `agentlight install-daemon`"
+                         : "LaunchAgent not installed — `agentlight install-daemon` (the daemon won't start at login)")
 
     let settings = (try? HookInstaller.load(settingsURL)) ?? [:]
     let installed = HookInstaller.installedEvents(in: settings)
     let expected = Set(HookInstaller.httpEvents + ["SessionStart"])
     let missing = expected.subtracting(installed).sorted()
-    check(missing.isEmpty, "хуки на все \(expected.count) событий в \(settingsURL.path)",
-          installed.isEmpty ? "хуков нет — `agentlight install-hooks`" : "нет хуков на: \(missing.joined(separator: ", ")) — `agentlight install-hooks`")
+    check(missing.isEmpty, "hooks on all \(expected.count) events in \(settingsURL.path)",
+          installed.isEmpty ? "no hooks — `agentlight install-hooks`" : "no hooks on: \(missing.joined(separator: ", ")) — `agentlight install-hooks`")
     let wantURL = HookInstaller(port: config.port, cliPath: cliPath).url
     let urls = Set(((settings["hooks"] as? [String: Any]) ?? [:]).values
         .flatMap { ($0 as? [[String: Any]]) ?? [] }
@@ -295,33 +295,33 @@ func doctor() {
         .compactMap { $0["url"] as? String }
         .filter { $0.hasPrefix("http://127.0.0.1:") })
     if !urls.isEmpty {
-        check(urls == [wantURL], "хуки смотрят на \(wantURL)", "хуки смотрят на \(urls.sorted().joined(separator: ", ")), а демон — на \(wantURL)")
+        check(urls == [wantURL], "hooks point at \(wantURL)", "hooks point at \(urls.sorted().joined(separator: ", ")), but the daemon is on \(wantURL)")
     }
 
     if let st {
-        check(st.deviceConnected, st.device, "\(st.device) — подключи пульт (без него работает строка меню)")
+        check(st.deviceConnected, st.device, "\(st.device) — plug in the device (the menu bar works without it)")
     }
     let ports = ((try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? []).filter { $0.hasPrefix("cu.usbmodem") }
-    print("ℹ️  CDC-порты: \(ports.isEmpty ? "нет" : ports.map { "/dev/" + $0 }.joined(separator: ", "))")
+    print("ℹ️  CDC ports: \(ports.isEmpty ? "none" : ports.map { "/dev/" + $0 }.joined(separator: ", "))")
     print("ℹ️  CLI: \(cliPath)")
     claudeRegistryCheck(check)
     switch st?.automation {
     case .granted:
-        check(true, "Automation → Terminal разрешено (фокус по кнопке)", "")
+        check(true, "Automation → Terminal allowed (focus from a button)", "")
     case .denied:
-        check(false, "", "Automation → Terminal запрещено — Системные настройки → Конфиденциальность и безопасность → Автоматизация → AgentLight → Terminal")
+        check(false, "", "Automation → Terminal denied — System Settings → Privacy & Security → Automation → AgentLight → Terminal")
     case .notAsked:
-        print("ℹ️  Automation → Terminal ещё не спрашивали — нажми кнопку на пульте или `agentlight focus 0` и разреши")
+        print("ℹ️  Automation → Terminal not asked yet — press a device button or `agentlight focus 0` and allow it")
     case .unknown:
-        print("ℹ️  Automation → Terminal не проверить: Terminal не запущен")
+        print("ℹ️  Automation → Terminal can't be checked: Terminal isn't running")
     case nil:
-        break  // демон не отвечает или старый
+        break  // daemon doesn't respond, or it's an old one
     }
     exit(problems == 0 ? 0 : 1)
 }
 
-/// Сверка внутреннего реестра Claude Code (`~/.claude/sessions`) с публичным `claude agents --json`:
-/// по реестру светофор узнаёт вкладки-оболочки и заготовки agent view, а его формат может смениться.
+/// Cross-checks Claude Code's internal registry (`~/.claude/sessions`) against the public `claude agents --json`:
+/// the registry is how traffic lights recognize shell tabs and agent view spares, and its format may change.
 func claudeRegistryCheck(_ check: (Bool, String, String) -> Void) {
     let registry = ClaudeSessions.load()
     let version = registry.entries.values
@@ -330,23 +330,23 @@ func claudeRegistryCheck(_ check: (Bool, String, String) -> Void) {
     switch ClaudeAgentsList.fetch() {
     case .success(let l): list = l
     case .failure(.noBinary):
-        print("ℹ️  claude не найден — сверку реестра Claude Code пропускаю")
+        print("ℹ️  claude not found — skipping the Claude Code registry cross-check")
         return
     case .failure(let e):
-        check(false, "", "\(e) — фоновые сессии решаются только по реестру, без сверки")
+        check(false, "", "\(e) — background sessions are decided by the registry alone, without a cross-check")
         return
     }
     let live = registry.entries.keys.filter(TerminalCapture.isAlive)
     guard !list.items.isEmpty || !live.isEmpty else {
-        print("ℹ️  сессий Claude Code нет — реестр сверить не с чем")
+        print("ℹ️  no Claude Code sessions — nothing to cross-check the registry against")
         return
     }
     let census = ClaudeCensus(registry: registry, listed: list)
     let problems = census.problems(among: Array(live) + Array(list.items.keys))
     let hidden = live.filter(census.isHidden).count
     check(problems.isEmpty,
-          "реестр Claude Code \(version) сходится с claude agents (сессий \(list.items.count), скрытых \(hidden))",
-          "реестр Claude Code \(version) разошёлся с claude agents — формат мог смениться:\n"
+          "Claude Code \(version) registry matches claude agents (\(list.items.count) sessions, \(hidden) hidden)",
+          "Claude Code \(version) registry diverged from claude agents — the format may have changed:\n"
             + problems.map { "     • \($0)" }.joined(separator: "\n"))
 }
 
@@ -357,26 +357,26 @@ func pin(_ slot: Int, path: String?) {
     c.pins = c.pins.filter { $0.value != slot }
     c.pins[p] = slot
     save(c)
-    print("\(p) → слот \(slot)")
+    print("\(p) → slot \(slot)")
 }
 
 func unpin(path: String?) {
     var c = loadConfig()
     let p = URL(fileURLWithPath: path ?? FileManager.default.currentDirectoryPath).standardizedFileURL.path
-    guard c.pins.removeValue(forKey: p) != nil else { fail("\(p) не закреплён") }
+    guard c.pins.removeValue(forKey: p) != nil else { fail("\(p) isn't pinned") }
     save(c)
-    print("\(p) откреплён")
+    print("\(p) unpinned")
 }
 
 func save(_ c: Config) {
     do { try c.save() } catch { fail("config.json: \(error)") }
     if Daemon.request("POST", "/control", body: try! JSONEncoder().encode(ControlRequest(cmd: .reload))) == nil {
-        print("(демон не запущен — применится при старте)")
+        print("(daemon isn't running — will apply at startup)")
     }
 }
 
 func replay(_ path: String, live: Bool, speed: Double) {
-    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { fail("не читается \(path)") }
+    guard let text = try? String(contentsOfFile: path, encoding: .utf8) else { fail("can't read \(path)") }
     let iso = ISO8601DateFormatter()
     iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
     let local = DateFormatter()
@@ -436,17 +436,17 @@ case "pin":
     pin(s, path: argv.first)
 case "unpin": unpin(path: argv.first)
 case "brightness":
-    guard let b = argv.first.flatMap({ UInt8($0) }) else { fail("нужна яркость 0..255") }
+    guard let b = argv.first.flatMap({ UInt8($0) }) else { fail("brightness 0..255 required") }
     var c = loadConfig()
     c.brightness = b
     save(c)
-    print("яркость \(b)")
+    print("brightness \(b)")
 case "replay":
     let live = flag("--live")
     let speed = option("--speed").flatMap(Double.init) ?? 1
-    guard let path = argv.first else { fail("нужен файл .jsonl") }
+    guard let path = argv.first else { fail("a .jsonl file required") }
     replay(path, live: live, speed: speed)
 case "logs": logs(follow: flag("-f"))
 case "-h", "--help", "help": print(usage)
-default: fail("неизвестная команда \(command)\n\n\(usage)", code: 64)
+default: fail("unknown command \(command)\n\n\(usage)", code: 64)
 }

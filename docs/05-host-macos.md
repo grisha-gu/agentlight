@@ -49,6 +49,9 @@ host/
 │   │   └── TranscriptTail.swift     # detects Esc interrupts in the transcript
 │   ├── agentlightd/                 # daemon wiring + MenuBar/ (status item, popover, settings)
 │   └── agentlight/                  # CLI
+├── Resources/
+│   ├── Info.plist, AgentLight.entitlements, AgentLight.icns
+│   └── <lang>.lproj/                # UI translations (Localizable.strings, InfoPlist.strings)
 └── Tests/AgentLightKitTests/
 ```
 
@@ -423,6 +426,21 @@ Recording and replaying events:
 ```bash
 agentlightd --record ~/replay.jsonl              # write every incoming hook
 agentlight replay ~/replay.jsonl --speed 4        # run them through the state machine
+```
+
+### Languages
+
+The menu bar UI (popover, settings window, the device line) follows the system
+language; a per-app override lives in System Settings → General → Language & Region →
+Applications. English is the source language: the strings in `agentlightd/MenuBar` are
+the localization keys, and every other language is a `host/Resources/<lang>.lproj/Localizable.strings`
+that `build-app.sh` copies into the bundle (also add the language to
+`CFBundleLocalizations` in `Info.plist`). Logs, the CLI and `GET /status` stay in English.
+
+To look at the UI in another language without changing the system one:
+
+```bash
+agentlightd --snapshot /tmp/ui -AppleLanguages "(ru)"   # from inside AgentLight.app
 ```
 
 ## 5.12. Test checklist

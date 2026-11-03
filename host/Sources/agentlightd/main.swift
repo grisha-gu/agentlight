@@ -2,13 +2,14 @@ import AgentLightKit
 import AppKit
 
 let usage = """
-agentlightd — демон AgentLight
+agentlightd — the AgentLight daemon
 
-  --fake-device        рисовать светофоры 1–4 в терминале вместо железа (клавиши 1–4 = кнопки)
-  --transport T        hid | cdc | all (по умолчанию all: HID, затем CDC)
-  --record PATH        дописывать все входящие хуки в JSONL (формат tools/hook-capture)
-  --no-menubar         без иконки в строке меню
-  --snapshot DIR       через 1 с сохранить иконку и popover в PNG и выйти (отладка UI)
+  --fake-device        draw traffic lights 1–4 in the terminal instead of hardware (keys 1–4 = buttons)
+  --transport T        hid | cdc | all (default all: HID, then CDC)
+  --record PATH        append all incoming hooks to JSONL (tools/hook-capture format)
+  --no-menubar         no menu bar icon
+  --snapshot DIR       after 1 s save the icon and popover as PNG and exit (UI debugging)
+  -AppleLanguages "(ru)"  UI language for this run (default: the system language)
 """
 
 var fake = false
@@ -24,11 +25,13 @@ while let a = args.next() {
     case "--record": recordPath = args.next()
     case "--no-menubar": menubar = false
     case "--snapshot": snapshotDir = args.next()
+    case "-AppleLanguages":  // `-AppleLanguages "(ru)"` — UI language for this run; Foundation reads it from argv itself
+        _ = args.next()
     case "-h", "--help":
         print(usage)
         exit(0)
     default:
-        FileHandle.standardError.write(Data("неизвестный аргумент \(a)\n\n\(usage)\n".utf8))
+        FileHandle.standardError.write(Data("unknown argument \(a)\n\n\(usage)\n".utf8))
         exit(64)
     }
 }
@@ -44,7 +47,7 @@ do {
 var transports: [DeviceTransport] = []
 let fakeTransport = FakeTransport()
 if fake {
-    // терминал занят рендером — лог в файл
+    // the terminal is busy rendering — log to a file
     Log.toFile(Paths.log)
     transports = [fakeTransport]
 } else {
@@ -62,7 +65,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             try daemon.start()
         } catch {
-            Log.error("не удалось стартовать: \(error)")
+            Log.error("failed to start: \(error)")
             exit(2)
         }
         if menubar {
@@ -86,7 +89,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 var signalSources: [DispatchSourceSignal] = []
-// SIGTERM от launchctl и Ctrl-C в терминале — погасить светофоры и вернуть терминал
+// SIGTERM from launchctl and Ctrl-C in the terminal — turn the lights off and restore the terminal
 for sig in [SIGTERM, SIGINT] {
     signal(sig, SIG_IGN)
     let src = DispatchSource.makeSignalSource(signal: sig, queue: .main)

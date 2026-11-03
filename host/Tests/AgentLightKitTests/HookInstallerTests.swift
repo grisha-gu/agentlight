@@ -47,7 +47,7 @@ final class HTTPParseTests: XCTestCase {
         XCTAssertEqual(a?.path, "/hook")
         XCTAssertEqual(a?.body, Data("{}".utf8))
         XCTAssertEqual(HTTPServer.parse(&buf)?.path, "/status")
-        XCTAssertNil(HTTPServer.parse(&buf), "тело ещё не дошло целиком")
+        XCTAssertNil(HTTPServer.parse(&buf), "the body hasn't fully arrived yet")
         buf.append(Data(":true}".utf8))
         XCTAssertEqual(HTTPServer.parse(&buf)?.body.count, 10)
         XCTAssertTrue(buf.isEmpty)

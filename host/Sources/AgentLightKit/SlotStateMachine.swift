@@ -1,9 +1,9 @@
-/// Видимое состояние светофора. Коды совпадают с `slot_state_t` прошивки (docs/03-protocol.md §3.2).
+/// Visible traffic light state. Codes match the firmware's `slot_state_t` (docs/03-protocol.md §3.2).
 public enum LightState: UInt8, Sendable, CaseIterable {
     case off = 0
-    case idle = 1   // зелёный
-    case busy = 2   // жёлтый
-    case attn = 3   // красный
+    case idle = 1   // green
+    case busy = 2   // yellow
+    case attn = 3   // red
 
     public var name: String {
         switch self {
@@ -20,12 +20,12 @@ public enum LightState: UInt8, Sendable, CaseIterable {
     }
 }
 
-/// В JSON — по имени: state.json и /status читаются глазами.
+/// In JSON — by name: state.json and /status are meant to be human-readable.
 extension LightState: Codable {
     public init(from decoder: Decoder) throws {
         let name = try decoder.singleValueContainer().decode(String.self)
         guard let s = LightState(name: name) else {
-            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "неизвестное состояние \(name)"))
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "unknown state \(name)"))
         }
         self = s
     }
@@ -36,23 +36,23 @@ extension LightState: Codable {
     }
 }
 
-/// Что событие делает со слотом агента.
+/// What an event does to the agent's slot.
 public enum Transition: Equatable, Sendable {
-    /// занять слот (если ещё не занят) и перейти в состояние
+    /// claim a slot (if not claimed yet) and switch to the state
     case start
     case set(LightState)
-    /// освободить слот; `rebind` — подержать его для следующей сессии того же окна
+    /// free the slot; `rebind` — hold it for the next session of the same window
     case end(rebind: Bool)
-    /// состояние не меняется, событие лишь продлевает жизнь сессии
+    /// state doesn't change, the event only extends the session's lifetime
     case ignore
 }
 
-/// Маппинг хуков → состояния, docs/01-architecture.md §1.3.
+/// Hook → state mapping, docs/01-architecture.md §1.3.
 public enum SlotStateMachine {
     static let attnNotifications: Set<String> = [
         "permission_prompt", "agent_needs_input", "elicitation_dialog", "elicitation_url_dialog",
     ]
-    /// `/clear` и `/resume` заводят новую сессию в том же окне — слот не отпускаем.
+    /// `/clear` and `/resume` start a new session in the same window — keep the slot.
     static let rebindReasons: Set<String> = ["clear", "resume"]
 
     public static func transition(for event: HookEvent) -> Transition {
@@ -65,18 +65,18 @@ public enum SlotStateMachine {
              "PermissionDenied", "ElicitationResult":
             return .set(.busy)
         case "SubagentStart", "SubagentStop", "PreCompact", "PostCompact":
-            // Не красят: Claude Code сам запускает форк-агентов, пока ты ничего не делаешь
-            // (away_summary через ~3 мин простоя, prompt_suggestion, agent_summary) и сжимает
-            // контекст в простое (idleCompaction). Настоящий субагент идёт внутри хода,
-            // когда слот уже жёлтый от UserPromptSubmit/PreToolUse. Вывод по коду Claude Code
-            // 2026-10-16; подтвердить по ~/.agentlight/hooks.jsonl после следующего away_summary.
+            // These don't color: Claude Code launches fork agents on its own while you're idle
+            // (away_summary after ~3 min idle, prompt_suggestion, agent_summary) and compacts
+            // context when idle (idleCompaction). A real subagent runs inside a turn,
+            // when the slot is already yellow from UserPromptSubmit/PreToolUse. Inferred from Claude Code's code
+            // 2026-10-16; confirm via ~/.agentlight/hooks.jsonl after the next away_summary.
             return .ignore
         case "PermissionRequest", "Elicitation", "StopFailure":
             return .set(.attn)
         case "Stop":
             return .set(.idle)
         case "Notification":
-            // idle_prompt — таймер бездействия через 60 с после Stop, не блокировка (§1.3)
+            // idle_prompt — an inactivity timer 60 s after Stop, not a block (§1.3)
             if let type = event.notificationType {
                 if attnNotifications.contains(type) { return .set(.attn) }
                 if type == "agent_completed" { return .set(.idle) }

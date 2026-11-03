@@ -3,7 +3,7 @@ import XCTest
 @testable import AgentLightKit
 
 final class TranscriptTailTests: XCTestCase {
-    // формы строк — из настоящего transcript-а Claude Code 2.1.295
+    // line shapes come from a real Claude Code 2.1.295 transcript
     let interruptTool = #"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user for tool use]"}]},"sessionId":"s"}"#
     let interruptPlain = #"{"type":"user","message":{"role":"user","content":"[Request interrupted by user]"},"sessionId":"s"}"#
     let toolOutput = #"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","content":"grep: [Request interrupted by user for tool use]"}]}}"#

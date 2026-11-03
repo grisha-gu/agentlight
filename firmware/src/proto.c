@@ -14,8 +14,8 @@ static char *next_tok(void) {
     return strtok(NULL, " \t");
 }
 
-// strtoul сам пропускает знак ("-1" → ULONG_MAX) и насыщается при переполнении,
-// а unsigned long на RP2040 32-битный — поэтому знак и ERANGE отсекаем руками.
+// strtoul silently accepts a sign ("-1" → ULONG_MAX) and saturates on overflow,
+// and unsigned long is 32-bit on the RP2040 — so the sign and ERANGE are rejected by hand.
 static bool parse_uint(const char *tok, int base, unsigned long max, unsigned long *out) {
     char *end;
     if (!tok || !isxdigit((unsigned char)*tok))
@@ -64,7 +64,7 @@ static const char *parse_welcome(cmd_t *c) {
     return next_tok() ? ERR_ARGS : NULL;
 }
 
-// CONFIG busy_pulse=1 idle_pulse=0 — любые из ключей, в любом порядке
+// CONFIG busy_pulse=1 idle_pulse=0 — any subset of keys, in any order
 static const char *parse_config(cmd_t *c) {
     static const struct { const char *key; uint8_t bit; } KEYS[] = {
         { "busy_pulse", CONFIG_BUSY_PULSE },
@@ -90,7 +90,7 @@ static const char *parse_config(cmd_t *c) {
     return NULL;
 }
 
-// RAW ff 00 00 ... — 12 уровней 0..255 в hex, порядок GP0..GP11
+// RAW ff 00 00 ... — 12 levels 0..255 in hex, order GP0..GP11
 static const char *parse_raw(cmd_t *c) {
     for (int i = 0; i < LED_COUNT; i++) {
         unsigned long v;

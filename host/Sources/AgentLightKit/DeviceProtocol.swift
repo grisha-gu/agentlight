@@ -1,11 +1,11 @@
 import Foundation
 
-/// Протокол устройства, docs/03-protocol.md. Один набор команд, два кодирования:
-/// 64-байтные HID-репорты и ASCII-строки для CDC.
+/// Device protocol, docs/03-protocol.md. One command set, two encodings:
+/// 64-byte HID reports and ASCII lines for CDC.
 public enum DeviceCommand: Equatable, Sendable {
     case setState(slot: Int, LightState)
     case setAll([LightState])
-    /// nil — волна по всем слотам
+    /// nil — wave across all slots
     case welcome(slot: Int?)
     case brightness(UInt8)
     case ping(seq: UInt32)
@@ -36,7 +36,7 @@ public enum DeviceCommand: Equatable, Sendable {
             r[0] = 0x07
         case .config(let busy, let idle):
             r[0] = 0x08
-            r[1] = (busy ? 2 : 0) | (idle ? 4 : 0)   // bit0 — бывший attn_blink, удалён
+            r[1] = (busy ? 2 : 0) | (idle ? 4 : 0)   // bit0 — former attn_blink, removed
         case .raw(let levels):
             r[0] = 0x09
             for (i, l) in levels.prefix(12).enumerated() { r[1 + i] = l }
@@ -83,7 +83,7 @@ public struct DeviceIdentity: Equatable, Sendable {
 }
 
 public enum DeviceEvent: Equatable, Sendable {
-    /// powerOn — положение выключателя на задней стенке; старая прошивка его не шлёт → true
+    /// powerOn — position of the power switch on the back wall; old firmware doesn't send it → true
     case ready(DeviceIdentity, powerOn: Bool)
     case button(slot: Int, ButtonGesture)
     case pong(seq: UInt32, uptimeMs: UInt32, watchdogTripped: Bool)
@@ -98,7 +98,7 @@ public enum DeviceEvent: Equatable, Sendable {
         switch op {
         case 0x81 where r.count >= 14:
             let uid = r[6..<14].map { String(format: "%02X", $0) }.joined()
-            // fw до 0.6.0 оставляет байт 14 нулём, а выключателя у неё нет
+            // fw before 0.6.0 leaves byte 14 zero, and has no power switch
             let fw = (Int(r[3]), Int(r[4]))
             let knowsPower = fw >= (0, 6)
             self = .ready(DeviceIdentity(proto: Int(r[1]), slots: Int(r[2]),
@@ -119,7 +119,7 @@ public enum DeviceEvent: Equatable, Sendable {
         }
     }
 
-    /// Асинхронные события и ответ на HELLO (`OK agentlight …` — тот же READY).
+    /// Asynchronous events and the HELLO reply (`OK agentlight …` — same as READY).
     public init?(asciiLine raw: String) {
         let line = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         let words = line.split(separator: " ").map(String.init)

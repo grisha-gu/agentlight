@@ -1,13 +1,13 @@
 import Foundation
 
-/// `~/.agentlight/config.json`, docs/01-architecture.md §1.4. Любое поле можно опустить.
+/// `~/.agentlight/config.json`, docs/01-architecture.md §1.4. Any field may be omitted.
 public struct Config: Codable, Equatable, Sendable {
     public var port: UInt16 = 48879
     public var brightness: UInt8 = 120
-    /// сколько светофоров в приложении; одно устройство показывает 4 из них,
-    /// второе — следующие 4 и т. д. (docs/05-host-macos.md §5.8)
+    /// how many traffic lights the app has; one device shows 4 of them,
+    /// the second one the next 4, and so on (docs/05-host-macos.md §5.8)
     public var slotCount = 4
-    /// cwd (или его предок) → индекс слота
+    /// cwd (or an ancestor) → slot index
     public var pins: [String: Int] = [:]
     public var busyTimeoutSec: Double = 900
     public var sessionTTLSec: Double = 8 * 3600
@@ -16,7 +16,7 @@ public struct Config: Codable, Equatable, Sendable {
     public var busyPulse = false
     public var emptySlotButtonLaunches: String?
     public var terminalFocusOrder: [String] = ["tmux", "native", "new_window"]
-    /// `/dev/cu.usbmodem…` для CDC-транспорта; nil — искать автоматически
+    /// `/dev/cu.usbmodem…` for the CDC transport; nil — autodetect
     public var cdcPort: String?
 
     public static let slotCountRange = 1...16
@@ -54,7 +54,7 @@ public struct Config: Codable, Equatable, Sendable {
         cdcPort = try c.decodeIfPresent(String.self, forKey: .cdcPort)
     }
 
-    /// Слот, закреплённый за cwd или ближайшим его предком.
+    /// Slot pinned to cwd or its nearest ancestor.
     public func pinnedSlot(for cwd: String?) -> Int? {
         guard let cwd else { return nil }
         var best: (len: Int, slot: Int)?
@@ -93,7 +93,7 @@ public extension Config {
 }
 
 public enum AtomicFile {
-    /// temp + rename в том же каталоге
+    /// temp + rename in the same directory
     public static func write(_ data: Data, to url: URL) throws {
         let dir = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

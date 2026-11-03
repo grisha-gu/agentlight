@@ -1,28 +1,28 @@
 import Foundation
 
-/// Реестр процессов Claude Code: `~/.claude/sessions/<pid>.json`, который пишет сам CLI.
-/// По нему видно, какие сессии фоновые, какая вкладка стала оболочкой, а какая сессия —
-/// запасная заготовка демона. Формат внутренний (проверен на 2.1.309–2.1.316), поэтому
-/// неизвестные поля игнорируем, а без файла решаем по argv.
+/// Claude Code process registry: `~/.claude/sessions/<pid>.json`, written by the CLI itself.
+/// It shows which sessions are background ones, which tab became a shell, and which session
+/// is the daemon's spare. The format is internal (checked on 2.1.309–2.1.316), so unknown
+/// fields are ignored, and without a file we decide by argv.
 public struct ClaudeSessions: Sendable {
     public struct Entry: Equatable, Sendable {
         public var pid: Int32
         public var sessionId: String?
-        /// "interactive" — сессия в своей вкладке, "bg" — под демоном Claude Code
+        /// "interactive" — a session in its own tab, "bg" — under the Claude Code daemon
         public var kind: String?
-        /// id фоновой задачи демона (8 hex), у `kind == "bg"`
+        /// daemon background job id (8 hex), for `kind == "bg"`
         public var jobId: String?
-        /// вкладку отправили в фон: её сессия уехала в задачу `parkedJobId`, а сам процесс
-        /// остался экраном (agent view / подключённая фоновая сессия). Не меняется, когда
-        /// пользователь переключается между сессиями, — что вкладка показывает сейчас, неизвестно
+        /// the tab was sent to the background: its session moved into job `parkedJobId`, and the
+        /// process stayed as a screen (agent view / attached background session). Doesn't change when
+        /// the user switches between sessions — what the tab shows right now is unknown
         public var parkedJobId: String?
-        /// запасной процесс, который демон держит под поле ввода в agent view.
-        /// Флаг пропадает, когда из agent view отправили задачу: дальше это обычная фоновая сессия
+        /// spare process the daemon keeps ready for the agent view input field.
+        /// The flag disappears once a job is sent from agent view: from then on it's a regular background session
         public var spare: Bool
         public var name: String?
-        /// версия Claude Code, записавшая файл
+        /// Claude Code version that wrote the file
         public var version: String?
-        /// когда файл последний раз переписывали (меняется со статусом сессии)
+        /// when the file was last rewritten (changes with the session status)
         public var modifiedAt: Date?
 
         public var isParkedShell: Bool { kind == "interactive" && parkedJobId != nil }
@@ -35,7 +35,7 @@ public struct ClaudeSessions: Sendable {
         self.entries = entries
     }
 
-    /// `AGENTLIGHT_CLAUDE_SESSIONS` — подменить каталог реестра (проверить, что будет при смене формата).
+    /// `AGENTLIGHT_CLAUDE_SESSIONS` — override the registry directory (to test a format change).
     public static var directory: URL {
         if let dir = ProcessInfo.processInfo.environment["AGENTLIGHT_CLAUDE_SESSIONS"] {
             return URL(fileURLWithPath: dir)
@@ -69,32 +69,32 @@ public struct ClaudeSessions: Sendable {
                      version: o["version"] as? String)
     }
 
-    // MARK: - Решения
+    // MARK: - Decisions
 
-    /// Реестр похож на тот, что мы знаем: есть записи с понятным `kind`. Пустой или
-    /// неузнаваемый реестр значит, что Claude Code сменил формат или место.
+    /// The registry looks like the one we know: there are entries with a recognizable `kind`. An empty or
+    /// unrecognizable registry means Claude Code changed the format or location.
     public var isRecognized: Bool {
         entries.values.contains { $0.kind == "interactive" || $0.kind == "bg" }
     }
 
-    /// Сессии этого процесса светофор не положен: запасная заготовка демона или вкладка-оболочка,
-    /// чья сессия уехала в фоновую задачу. Без файла в реестре — по argv: незанятая заготовка
-    /// (`--bg-spare`) файла ещё не пишет, а SessionStart уже отрабатывает. Но argv остаётся
-    /// `--bg-spare` и после того, как заготовке отдали задачу, поэтому верим ему, только
-    /// пока реестр в целом узнаваем — иначе лучше лишняя лампа, чем спрятанная работа.
+    /// This process's session gets no traffic light: the daemon's spare or a shell tab whose
+    /// session moved into a background job. Without a registry file — by argv: an unclaimed spare
+    /// (`--bg-spare`) doesn't write a file yet, but SessionStart already fires. But argv stays
+    /// `--bg-spare` even after the spare has been given a job, so we trust it only while
+    /// the registry as a whole is recognizable — otherwise an extra lamp beats hidden work.
     public func isHidden(_ pid: Int32, arguments: (Int32) -> [String]?) -> Bool {
         if let e = entries[pid] { return e.isSpare || e.isParkedShell }
         return isRecognized && arguments(pid)?.contains("--bg-spare") == true
     }
 
-    /// Вкладка-оболочка, из которой фоновую сессию `pid` отправили в фон.
+    /// The shell tab from which background session `pid` was sent to the background.
     public func parkedShell(of pid: Int32) -> Int32? {
         guard let job = entries[pid]?.jobId, entries[pid]?.kind == "bg" else { return nil }
         return entries.values.first { $0.isParkedShell && $0.parkedJobId == job }?.pid
     }
 
-    /// Совпадает ли аргумент `claude attach <id|name>` с фоновой сессией `e`
-    /// (CLI принимает id задачи, начало id сессии или часть имени).
+    /// Whether the `claude attach <id|name>` argument matches background session `e`
+    /// (the CLI accepts a job id, a session id prefix or part of the name).
     static func attachTarget(_ arg: String, matches e: Entry) -> Bool {
         guard !arg.isEmpty else { return false }
         if arg == e.jobId { return true }
@@ -103,20 +103,20 @@ public struct ClaudeSessions: Sendable {
         return false
     }
 
-    /// `claude attach X` → X; nil, если это не attach.
+    /// `claude attach X` → X; nil if it's not an attach.
     static func attachArgument(_ args: [String]) -> String? {
         guard args.count >= 3, args[1] == "attach" else { return nil }
         return args[2]
     }
 }
 
-// MARK: - Процессы (ввод-вывод)
+// MARK: - Processes (I/O)
 
 extension ClaudeSessions {
-    /// Вкладка, в которой смотрят фоновую сессию `pid`: живой `claude attach` на её задачу,
-    /// иначе вкладка-оболочка, из которой её отправили в фон (скорее всего показывает её же,
-    /// но пользователь мог переключиться в agent view). nil — сессия не фоновая или окна нет.
-    /// `scanAttach: false` — без обхода всех процессов (для хука, он дёргается на каждый инструмент).
+    /// The tab where background session `pid` is being watched: a live `claude attach` to its job,
+    /// otherwise the shell tab it was sent to the background from (most likely showing it,
+    /// but the user may have switched to agent view). nil — not a background session, or no window.
+    /// `scanAttach: false` — without walking all processes (for the hook, which fires on every tool call).
     public static func viewer(of pid: Int32, scanAttach: Bool = true) -> (job: String?, terminal: TerminalRef?) {
         let reg = load()
         guard let e = reg.entries[pid], e.kind == "bg" else { return (nil, nil) }
