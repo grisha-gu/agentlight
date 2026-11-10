@@ -32,8 +32,8 @@ AGENTLIGHT_HOME=/tmp/al swift run agentlightd --transport cdc
 AGENTLIGHT_HOME=/tmp/al swift run agentlight status
 ```
 
-`agentlightd --snapshot DIR` renders the menu bar icon and popover to PNG files and
-exits.
+`agentlightd --snapshot DIR` renders the menu bar icon (on a dark and a light bar) and
+the popover to PNG files and exits.
 
 ## Installing
 

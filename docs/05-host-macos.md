@@ -419,7 +419,9 @@ $ agentlightd --fake-device
 ```
 
 The menu bar icon and its popover show the same lights, so AgentLight is usable even
-without the device.
+without the device. The icon follows the menu bar's look: when the bar switches to black
+icons (a light wallpaper behind it), the lit lights get deeper colors and a dark ring so
+yellow and green don't fade into the background.
 
 Recording and replaying events:
 

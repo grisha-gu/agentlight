@@ -10,6 +10,8 @@ final class StatusItemController: NSObject {
     private let model = PanelModel()
     private lazy var panel = NSHostingController(rootView: PanelView(model: model))
     private var animationTimer: Timer?
+    /// The menu bar flips between light and dark icons with the wallpaper — redraw on every flip.
+    private var appearanceObservation: NSKeyValueObservation?
     private lazy var settings = SettingsWindowController(daemon: daemon)
 
     init(daemon: Daemon) {
@@ -36,6 +38,9 @@ final class StatusItemController: NSObject {
             button.target = self
             button.action = #selector(toggle(_:))
             button.toolTip = "AgentLight"
+            appearanceObservation = button.observe(\.effectiveAppearance) { [weak self] _, _ in
+                DispatchQueue.main.async { self?.refresh() }
+            }
         }
         refresh()
     }
@@ -64,7 +69,8 @@ final class StatusItemController: NSObject {
         model.overflow = daemon.allocator.overflow.map(\.projectName)
         model.device = daemon.link.status.localizedText
         model.deviceConnected = daemon.link.isActive
-        item.button?.image = MenuBarIcon.image(lights: lights, welcomeRows: model.slots.map(\.welcomeRow))
+        item.button?.image = MenuBarIcon.image(lights: lights, welcomeRows: model.slots.map(\.welcomeRow),
+                                               palette: menuBarPalette)
 
         // while the welcome animation runs, redraw 10 times a second
         let animating = daemon.welcomeUntil.values.contains { $0 > now }
@@ -76,14 +82,29 @@ final class StatusItemController: NSObject {
         }
     }
 
+    private var menuBarPalette: MenuBarIcon.Palette {
+        guard let appearance = item.button?.effectiveAppearance else { return .dark }
+        return MenuBarIcon.Palette.for(appearance)
+    }
+
     /// Debugging without screen access: icon and popover to PNG.
     @MainActor
     func snapshot(to dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let icon = MenuBarIcon.image(lights: daemon.lights, welcomeRows: model.slots.map(\.welcomeRow))
-        var rect = NSRect(origin: .zero, size: icon.size)
-        if let cg = icon.cgImage(forProposedRect: &rect, context: nil, hints: [.ctm: NSAffineTransform(transform: .init(scale: 4))]) {
-            write(cg, to: dir.appendingPathComponent("icon.png"))
+        for (name, palette, bg) in [("icon-dark.png", MenuBarIcon.Palette.dark, NSColor(white: 0.15, alpha: 1)),
+                                    ("icon-light.png", .light, NSColor(white: 0.93, alpha: 1))] {
+            let icon = MenuBarIcon.image(lights: daemon.lights, welcomeRows: model.slots.map(\.welcomeRow), palette: palette)
+            let onBackground = NSImage(size: icon.size, flipped: false) { r in
+                bg.setFill()
+                r.fill()
+                icon.draw(in: r)
+                return true
+            }
+            var rect = NSRect(origin: .zero, size: icon.size)
+            if let cg = onBackground.cgImage(forProposedRect: &rect, context: nil,
+                                             hints: [.ctm: NSAffineTransform(transform: .init(scale: 4))]) {
+                write(cg, to: dir.appendingPathComponent(name))
+            }
         }
         for (name, scheme) in [("panel-light.png", ColorScheme.light), ("panel-dark.png", .dark)] {
             let view = PanelView(model: model)
@@ -112,11 +133,29 @@ final class StatusItemController: NSObject {
 enum MenuBarIcon {
     static let rows: [LightState] = [.attn, .busy, .idle]
 
-    static func color(_ row: Int) -> NSColor {
-        [NSColor.systemRed, .systemYellow, .systemGreen][row]
+    /// Colors for one menu bar look. On a light menu bar (black icons) pale yellow and green
+    /// get lost, so the lit lights are deeper and carry a dark ring, and the unlit ones are fainter.
+    struct Palette {
+        let lit: [NSColor]  // red, yellow, green
+        let unlit: NSColor
+        let ring: NSColor?
+
+        static let dark = Palette(lit: [NSColor(srgbRed: 1.00, green: 0.27, blue: 0.23, alpha: 1),
+                                        NSColor(srgbRed: 1.00, green: 0.84, blue: 0.04, alpha: 1),
+                                        NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)],
+                                  unlit: NSColor(white: 1, alpha: 0.22), ring: nil)
+        static let light = Palette(lit: [NSColor(srgbRed: 0.88, green: 0.06, blue: 0.09, alpha: 1),
+                                         NSColor(srgbRed: 1.00, green: 0.70, blue: 0.00, alpha: 1),
+                                         NSColor(srgbRed: 0.05, green: 0.66, blue: 0.20, alpha: 1)],
+                                   unlit: NSColor(white: 0, alpha: 0.13), ring: NSColor(white: 0, alpha: 0.5))
+
+        static func `for`(_ appearance: NSAppearance) -> Palette {
+            let match = appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
+            return match == .aqua || match == .vibrantLight ? .light : .dark
+        }
     }
 
-    static func image(lights: [LightState], welcomeRows: [Int?]) -> NSImage {
+    static func image(lights: [LightState], welcomeRows: [Int?], palette: Palette) -> NSImage {
         let d: CGFloat = 4.5, gapY: CGFloat = 1.3, gapX: CGFloat = 2.5
         // groups of four (per device) are spaced a bit wider
         let groupGap: CGFloat = 2.5
@@ -132,8 +171,14 @@ enum MenuBarIcon {
                     let welcome = welcomeRows.indices.contains(slot) ? welcomeRows[slot] : nil
                     let lit = welcome.map { $0 == row } ?? (lights[slot] == rows[row])
                     let r = NSRect(x: x(slot), y: top + CGFloat(row) * (d + gapY), width: d, height: d)
-                    (lit ? color(row) : NSColor.labelColor.withAlphaComponent(0.22)).setFill()
+                    (lit ? palette.lit[row] : palette.unlit).setFill()
                     NSBezierPath(ovalIn: r).fill()
+                    if lit, let ring = palette.ring {
+                        ring.setStroke()
+                        let path = NSBezierPath(ovalIn: r.insetBy(dx: 0.3, dy: 0.3))
+                        path.lineWidth = 0.6
+                        path.stroke()
+                    }
                 }
             }
             return true
