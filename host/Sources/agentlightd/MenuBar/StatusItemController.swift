@@ -162,8 +162,8 @@ enum MenuBarIcon {
     static func image(lights: [LightState], welcomeRows: [Int?], palette: Palette) -> NSImage {
         // The same geometry with and without plates, so switching styles never moves a light.
         // `m` is both the outer margin and how far a plate reaches past its lights; the plate's
-        // corner radius is d/2 + m, concentric with the corner lights.
-        let d: CGFloat = 4.5, m: CGFloat = 1, gapX: CGFloat = 2.5
+        // corners are a bit tighter than concentric with the corner lights (d/2 + m = 3.25).
+        let d: CGFloat = 4.5, m: CGFloat = 1, gapX: CGFloat = 2.5, plateRadius: CGFloat = 2.6
         let height: CGFloat = 18
         let gapY = (height - 2 * m - 3 * d) / 2
         // groups of four (per device) are spaced a bit wider, enough to keep plates apart
@@ -180,7 +180,7 @@ enum MenuBarIcon {
                 for first in stride(from: 0, to: n, by: perGroup) {
                     let last = min(first + perGroup, n) - 1
                     let r = NSRect(x: x(first) - m, y: 0, width: x(last) - x(first) + d + 2 * m, height: height)
-                    NSBezierPath(roundedRect: r, xRadius: d / 2 + m, yRadius: d / 2 + m).fill()
+                    NSBezierPath(roundedRect: r, xRadius: plateRadius, yRadius: plateRadius).fill()
                 }
             }
             let top = m
