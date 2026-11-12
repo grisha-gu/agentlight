@@ -133,21 +133,19 @@ final class StatusItemController: NSObject {
 enum MenuBarIcon {
     static let rows: [LightState] = [.attn, .busy, .idle]
 
-    /// Colors for one menu bar look. On a light menu bar (black icons) pale yellow and green
-    /// get lost, so the lit lights are deeper and carry a dark ring, and the unlit ones are fainter.
+    /// How the icon looks on one kind of menu bar. On a light bar (black icons) the colored
+    /// lights get lost, so each group of four (or the tail) sits on a dark rounded plate.
     struct Palette {
         let lit: [NSColor]  // red, yellow, green
         let unlit: NSColor
-        let ring: NSColor?
+        let plate: NSColor?
 
-        static let dark = Palette(lit: [NSColor(srgbRed: 1.00, green: 0.27, blue: 0.23, alpha: 1),
-                                        NSColor(srgbRed: 1.00, green: 0.84, blue: 0.04, alpha: 1),
-                                        NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)],
-                                  unlit: NSColor(white: 1, alpha: 0.22), ring: nil)
-        static let light = Palette(lit: [NSColor(srgbRed: 0.88, green: 0.06, blue: 0.09, alpha: 1),
-                                         NSColor(srgbRed: 1.00, green: 0.70, blue: 0.00, alpha: 1),
-                                         NSColor(srgbRed: 0.05, green: 0.66, blue: 0.20, alpha: 1)],
-                                   unlit: NSColor(white: 0, alpha: 0.13), ring: NSColor(white: 0, alpha: 0.5))
+        private static let bright = [NSColor(srgbRed: 1.00, green: 0.27, blue: 0.23, alpha: 1),
+                                     NSColor(srgbRed: 1.00, green: 0.84, blue: 0.04, alpha: 1),
+                                     NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)]
+        static let dark = Palette(lit: bright, unlit: NSColor(white: 1, alpha: 0.22), plate: nil)
+        static let light = Palette(lit: bright, unlit: NSColor(white: 1, alpha: 0.22),
+                                   plate: NSColor(white: 0.12, alpha: 0.9))
 
         static func `for`(_ appearance: NSAppearance) -> Palette {
             let match = appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
@@ -156,15 +154,29 @@ enum MenuBarIcon {
     }
 
     static func image(lights: [LightState], welcomeRows: [Int?], palette: Palette) -> NSImage {
-        let d: CGFloat = 4.5, gapY: CGFloat = 1.3, gapX: CGFloat = 2.5
-        // groups of four (per device) are spaced a bit wider
-        let groupGap: CGFloat = 2.5
+        let plated = palette.plate != nil
+        // the plate takes the full 18 pt height, so the lights shrink a little to leave it a margin
+        let d: CGFloat = plated ? 4.2 : 4.5, gapY: CGFloat = plated ? 1.1 : 1.3, gapX: CGFloat = 2.5
+        let padX: CGFloat = 2.2, radius: CGFloat = 4
+        // groups of four (per device) are spaced a bit wider; plates need room for their padding
+        let groupGap: CGFloat = plated ? 2.5 + 2 * padX : 2.5
+        let margin: CGFloat = plated ? padX : 1
         let n = lights.count
+        let perGroup = DeviceLink.slotsPerDevice
         func x(_ slot: Int) -> CGFloat {
-            1 + CGFloat(slot) * (d + gapX) + CGFloat(slot / DeviceLink.slotsPerDevice) * groupGap
+            margin + CGFloat(slot) * (d + gapX) + CGFloat(slot / perGroup) * groupGap
         }
-        let size = NSSize(width: x(max(n, 1) - 1) + d + 1, height: 18)
+        let size = NSSize(width: x(max(n, 1) - 1) + d + margin, height: 18)
         let img = NSImage(size: size, flipped: true) { _ in
+            if let plate = palette.plate {
+                plate.setFill()
+                for first in stride(from: 0, to: n, by: perGroup) {
+                    let last = min(first + perGroup, n) - 1
+                    let r = NSRect(x: x(first) - padX, y: 0,
+                                   width: x(last) - x(first) + d + 2 * padX, height: size.height)
+                    NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+                }
+            }
             let top = (size.height - (3 * d + 2 * gapY)) / 2
             for slot in 0..<n {
                 for row in 0..<3 {
@@ -173,12 +185,6 @@ enum MenuBarIcon {
                     let r = NSRect(x: x(slot), y: top + CGFloat(row) * (d + gapY), width: d, height: d)
                     (lit ? palette.lit[row] : palette.unlit).setFill()
                     NSBezierPath(ovalIn: r).fill()
-                    if lit, let ring = palette.ring {
-                        ring.setStroke()
-                        let path = NSBezierPath(ovalIn: r.insetBy(dx: 0.3, dy: 0.3))
-                        path.lineWidth = 0.6
-                        path.stroke()
-                    }
                 }
             }
             return true
