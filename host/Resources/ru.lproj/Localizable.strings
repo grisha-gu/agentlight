@@ -30,6 +30,11 @@
 "Traffic Lights" = "Светофоры";
 "Traffic lights in the app: %lld" = "Светофоров в приложении: %lld";
 "One device shows 4 traffic lights. A second connected device shows the next 4, a third another 4, and so on. Traffic lights without a device are only visible in the menu bar." = "Одно устройство показывает 4 светофора. Второе подключённое — следующие 4, третье — ещё 4 и так далее. Светофоры, на которые устройства не хватило, видны только в строке меню.";
+"Menu Bar Icon" = "Значок в строке меню";
+"Automatic" = "Автоматически";
+"Plain" = "Без подложки";
+"On Plates" = "На подложке";
+"Automatic puts each group of four lights on a dark plate when the menu bar shows black icons (a light wallpaper behind it)." = "Автоматически — каждая четвёрка светофоров на тёмной подложке, когда значки в строке меню чёрные (за ней светлые обои).";
 "New Agent" = "Новый агент";
 "~ (default)" = "~ (по умолчанию)";
 "home folder" = "домашний каталог";

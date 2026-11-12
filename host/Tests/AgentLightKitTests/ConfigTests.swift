@@ -48,4 +48,15 @@ final class ConfigTests: XCTestCase {
         try Data(#"{"slot_count": 100}"#.utf8).write(to: url)
         XCTAssertEqual(try Config.load(from: url).slotCount, Config.slotCountRange.upperBound)
     }
+
+    func testMenuBarIconStyleRoundTripsAndFallsBackToAuto() throws {
+        XCTAssertEqual(Config().menuBarIcon, .auto)
+        var c = Config()
+        c.menuBarIcon = .plates
+        try c.save(to: url)
+        XCTAssertTrue(try String(contentsOf: url, encoding: .utf8).contains(#""menu_bar_icon" : "plates""#))
+        XCTAssertEqual(try Config.load(from: url).menuBarIcon, .plates)
+        try Data(#"{"menu_bar_icon": "neon"}"#.utf8).write(to: url)
+        XCTAssertEqual(try Config.load(from: url).menuBarIcon, .auto)
+    }
 }

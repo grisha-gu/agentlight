@@ -15,11 +15,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.onResetLaunchDir = { [weak self] in self?.setLaunchDir(nil) }
         model.onPick = { [weak self] dir in self?.setLaunchDir(dir) }
         model.onSlotCount = { [weak self] n in self?.setSlotCount(n) }
+        model.onIconStyle = { [weak self] style in self?.setIconStyle(style) }
     }
 
     func show() {
         model.launchDir = daemon.config.emptySlotButtonLaunches
         model.slotCount = daemon.config.slotCount
+        model.iconStyle = daemon.config.menuBarIcon
         model.recent = recentProjectDirs()
         if window == nil {
             let host = NSHostingController(rootView: SettingsView(model: model))
@@ -79,6 +81,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         model.slotCount = daemon.config.slotCount
     }
 
+    private func setIconStyle(_ style: MenuBarIconStyle) {
+        let reply = daemon.updateConfig { $0.menuBarIcon = style }
+        model.error = reply.ok ? nil : reply.message
+        model.iconStyle = daemon.config.menuBarIcon
+    }
+
     /// Folders of the agents currently in slots — a quick pick without a dialog.
     private func recentProjectDirs() -> [String] {
         var seen = Set<String>()
@@ -97,12 +105,14 @@ final class SettingsModel: ObservableObject {
     @Published var launchDir: String?
     @Published var recent: [String] = []
     @Published var slotCount = Config().slotCount
+    @Published var iconStyle = Config().menuBarIcon
     @Published var error: String?
 
     var onChooseLaunchDir: () -> Void = {}
     var onResetLaunchDir: () -> Void = {}
     var onPick: (String) -> Void = { _ in }
     var onSlotCount: (Int) -> Void = { _ in }
+    var onIconStyle: (MenuBarIconStyle) -> Void = { _ in }
 }
 
 struct SettingsView: View {
@@ -120,6 +130,25 @@ struct SettingsView: View {
                 .padding(6)
             }
             Text("One device shows 4 traffic lights. A second connected device shows the next 4, a third another 4, and so on. Traffic lights without a device are only visible in the menu bar.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text("Menu Bar Icon").font(.headline)
+                .padding(.top, 8)
+            GroupBox {
+                Picker("Menu Bar Icon", selection: Binding(get: { model.iconStyle }, set: { model.onIconStyle($0) })) {
+                    Text("Automatic").tag(MenuBarIconStyle.auto)
+                    Text("Plain").tag(MenuBarIconStyle.plain)
+                    Text("On Plates").tag(MenuBarIconStyle.plates)
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .fixedSize()
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(6)
+            }
+            Text("Automatic puts each group of four lights on a dark plate when the menu bar shows black icons (a light wallpaper behind it).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -165,6 +194,12 @@ struct SettingsView: View {
                     .foregroundStyle(.red)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            Text(verbatim: "AgentLight \(AgentLightVersion.string)")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.top, 8)
         }
         .padding(20)
         .frame(width: 480)

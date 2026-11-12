@@ -83,16 +83,16 @@ final class StatusItemController: NSObject {
     }
 
     private var menuBarPalette: MenuBarIcon.Palette {
-        guard let appearance = item.button?.effectiveAppearance else { return .dark }
-        return MenuBarIcon.Palette.for(appearance)
+        MenuBarIcon.Palette.for(daemon.config.menuBarIcon,
+                                on: item.button?.effectiveAppearance ?? NSAppearance(named: .darkAqua)!)
     }
 
     /// Debugging without screen access: icon and popover to PNG.
     @MainActor
     func snapshot(to dir: URL) {
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        for (name, palette, bg) in [("icon-dark.png", MenuBarIcon.Palette.dark, NSColor(white: 0.15, alpha: 1)),
-                                    ("icon-light.png", .light, NSColor(white: 0.93, alpha: 1))] {
+        for (name, palette, bg) in [("icon-dark.png", MenuBarIcon.Palette.plainOnDark, NSColor(white: 0.15, alpha: 1)),
+                                    ("icon-light.png", .plated, NSColor(white: 0.93, alpha: 1))] {
             let icon = MenuBarIcon.image(lights: daemon.lights, welcomeRows: model.slots.map(\.welcomeRow), palette: palette)
             let onBackground = NSImage(size: icon.size, flipped: false) { r in
                 bg.setFill()
@@ -143,13 +143,19 @@ enum MenuBarIcon {
         private static let bright = [NSColor(srgbRed: 1.00, green: 0.27, blue: 0.23, alpha: 1),
                                      NSColor(srgbRed: 1.00, green: 0.84, blue: 0.04, alpha: 1),
                                      NSColor(srgbRed: 0.19, green: 0.82, blue: 0.35, alpha: 1)]
-        static let dark = Palette(lit: bright, unlit: NSColor(white: 1, alpha: 0.22), plate: nil)
-        static let light = Palette(lit: bright, unlit: NSColor(white: 1, alpha: 0.22),
-                                   plate: NSColor(white: 0.12, alpha: 0.9))
+        static let plainOnDark = Palette(lit: bright, unlit: NSColor(white: 1, alpha: 0.22), plate: nil)
+        static let plainOnLight = Palette(lit: bright, unlit: NSColor(white: 0, alpha: 0.18), plate: nil)
+        static let plated = Palette(lit: bright, unlit: NSColor(white: 1, alpha: 0.22),
+                                    plate: NSColor(white: 0.12, alpha: 0.9))
 
-        static func `for`(_ appearance: NSAppearance) -> Palette {
+        static func `for`(_ style: MenuBarIconStyle, on appearance: NSAppearance) -> Palette {
             let match = appearance.bestMatch(from: [.aqua, .darkAqua, .vibrantLight, .vibrantDark])
-            return match == .aqua || match == .vibrantLight ? .light : .dark
+            let lightBar = match == .aqua || match == .vibrantLight
+            switch style {
+            case .plates: return .plated
+            case .plain: return lightBar ? .plainOnLight : .plainOnDark
+            case .auto: return lightBar ? .plated : .plainOnDark
+            }
         }
     }
 

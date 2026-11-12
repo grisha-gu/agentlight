@@ -201,7 +201,8 @@ claim(session_id, cwd, pid):
   "busy_timeout_sec": 900,
   "idle_pulse": false,
   "empty_slot_button_launches": "~/projects",
-  "terminal_focus_order": ["tmux", "native", "new_window"]
+  "terminal_focus_order": ["tmux", "native", "new_window"],
+  "menu_bar_icon": "auto"
 }
 ```
 
@@ -211,6 +212,10 @@ claim(session_id, cwd, pid):
 without a device are only visible in the menu bar. Lowering `slot_count` moves
 sessions from the removed slots to overflow; raising it fills the new slots from
 overflow.
+
+`menu_bar_icon` is how the menu bar icon draws its lights (also in **Settings…**):
+`auto` (default) puts each group of four on a dark rounded plate when the menu bar
+shows black icons, `plain` never does, `plates` always does.
 
 ## 1.5. Two-level watchdog
 

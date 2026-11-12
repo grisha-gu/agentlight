@@ -304,6 +304,7 @@ final class Daemon {
             Log.error("config.json: \(error)")
             return ControlReply(ok: false, message: "config.json: \(error)")
         }
+        defer { onChange?() }  // e.g. the menu bar icon style
         return reloadConfig()
     }
 

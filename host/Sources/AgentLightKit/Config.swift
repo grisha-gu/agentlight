@@ -1,5 +1,15 @@
 import Foundation
 
+/// How the menu bar icon draws its lights.
+public enum MenuBarIconStyle: String, Codable, CaseIterable, Sendable {
+    /// plates when the menu bar shows black icons (a light wallpaper behind it), plain otherwise
+    case auto
+    /// bare lights, as on a dark menu bar
+    case plain
+    /// every group of four lights on a dark rounded plate
+    case plates
+}
+
 /// `~/.agentlight/config.json`, docs/01-architecture.md §1.4. Any field may be omitted.
 public struct Config: Codable, Equatable, Sendable {
     public var port: UInt16 = 48879
@@ -18,6 +28,7 @@ public struct Config: Codable, Equatable, Sendable {
     public var terminalFocusOrder: [String] = ["tmux", "native", "new_window"]
     /// `/dev/cu.usbmodem…` for the CDC transport; nil — autodetect
     public var cdcPort: String?
+    public var menuBarIcon = MenuBarIconStyle.auto
 
     public static let slotCountRange = 1...16
 
@@ -34,6 +45,7 @@ public struct Config: Codable, Equatable, Sendable {
         case emptySlotButtonLaunches = "empty_slot_button_launches"
         case terminalFocusOrder = "terminal_focus_order"
         case cdcPort = "cdc_port"
+        case menuBarIcon = "menu_bar_icon"
     }
 
     public init(from decoder: Decoder) throws {
@@ -52,6 +64,8 @@ public struct Config: Codable, Equatable, Sendable {
         emptySlotButtonLaunches = try c.decodeIfPresent(String.self, forKey: .emptySlotButtonLaunches)
         terminalFocusOrder = try c.decodeIfPresent([String].self, forKey: .terminalFocusOrder) ?? d.terminalFocusOrder
         cdcPort = try c.decodeIfPresent(String.self, forKey: .cdcPort)
+        // an unknown value (a typo, a newer version's style) falls back to the default
+        menuBarIcon = (try? c.decodeIfPresent(MenuBarIconStyle.self, forKey: .menuBarIcon)) ?? d.menuBarIcon
     }
 
     /// Slot pinned to cwd or its nearest ancestor.
