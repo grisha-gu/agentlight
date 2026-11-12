@@ -162,9 +162,10 @@ enum MenuBarIcon {
     static func image(lights: [LightState], welcomeRows: [Int?], palette: Palette) -> NSImage {
         // The same geometry with and without plates, so switching styles never moves a light.
         // `m` is both the outer margin and how far a plate reaches past its lights; the plate's
-        // corners are a bit tighter than concentric with the corner lights (d/2 + m = 3.25).
-        let d: CGFloat = 4.5, m: CGFloat = 1, gapX: CGFloat = 2.5, plateRadius: CGFloat = 2.3
-        let height: CGFloat = 18
+        // corners are a bit tighter than concentric with the corner lights (d/2 + m = 3.75).
+        let d: CGFloat = 4.5, m: CGFloat = 1.5, gapX: CGFloat = 2.5, plateRadius: CGFloat = 2.8
+        // a touch over the usual 18 pt to fit the plate's margin; the menu bar is 22–24 pt
+        let height: CGFloat = 19
         let gapY = (height - 2 * m - 3 * d) / 2
         // groups of four (per device) are spaced a bit wider, enough to keep plates apart
         let groupGap: CGFloat = 3.5
