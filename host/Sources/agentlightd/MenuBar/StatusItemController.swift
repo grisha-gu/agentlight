@@ -160,30 +160,30 @@ enum MenuBarIcon {
     }
 
     static func image(lights: [LightState], welcomeRows: [Int?], palette: Palette) -> NSImage {
-        let plated = palette.plate != nil
-        // the plate takes the full 18 pt height, so the lights shrink a little to leave it a margin
-        let d: CGFloat = plated ? 4.2 : 4.5, gapY: CGFloat = plated ? 1.1 : 1.3, gapX: CGFloat = 2.5
-        let padX: CGFloat = 2.2, radius: CGFloat = 4
-        // groups of four (per device) are spaced a bit wider; plates need room for their padding
-        let groupGap: CGFloat = plated ? 2.5 + 2 * padX : 2.5
-        let margin: CGFloat = plated ? padX : 1
+        // The same geometry with and without plates, so switching styles never moves a light.
+        // `m` is both the outer margin and how far a plate reaches past its lights; the plate's
+        // corner radius is d/2 + m, concentric with the corner lights.
+        let d: CGFloat = 4.5, m: CGFloat = 1, gapX: CGFloat = 2.5
+        let height: CGFloat = 18
+        let gapY = (height - 2 * m - 3 * d) / 2
+        // groups of four (per device) are spaced a bit wider, enough to keep plates apart
+        let groupGap: CGFloat = 3.5
         let n = lights.count
         let perGroup = DeviceLink.slotsPerDevice
         func x(_ slot: Int) -> CGFloat {
-            margin + CGFloat(slot) * (d + gapX) + CGFloat(slot / perGroup) * groupGap
+            m + CGFloat(slot) * (d + gapX) + CGFloat(slot / perGroup) * groupGap
         }
-        let size = NSSize(width: x(max(n, 1) - 1) + d + margin, height: 18)
+        let size = NSSize(width: x(max(n, 1) - 1) + d + m, height: height)
         let img = NSImage(size: size, flipped: true) { _ in
             if let plate = palette.plate {
                 plate.setFill()
                 for first in stride(from: 0, to: n, by: perGroup) {
                     let last = min(first + perGroup, n) - 1
-                    let r = NSRect(x: x(first) - padX, y: 0,
-                                   width: x(last) - x(first) + d + 2 * padX, height: size.height)
-                    NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+                    let r = NSRect(x: x(first) - m, y: 0, width: x(last) - x(first) + d + 2 * m, height: height)
+                    NSBezierPath(roundedRect: r, xRadius: d / 2 + m, yRadius: d / 2 + m).fill()
                 }
             }
-            let top = (size.height - (3 * d + 2 * gapY)) / 2
+            let top = m
             for slot in 0..<n {
                 for row in 0..<3 {
                     let welcome = welcomeRows.indices.contains(slot) ? welcomeRows[slot] : nil
