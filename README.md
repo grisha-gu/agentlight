@@ -107,7 +107,7 @@ docs/                design documentation
 | Part | Status |
 |---|---|
 | Firmware | 0.6.0, tested on a breadboard prototype |
-| macOS app | 0.3.0, released (Homebrew, signed and notarized) |
+| macOS app | 0.3.1, released (Homebrew, signed and notarized) |
 | PCB | rev. a, ordered |
 | Enclosure | in design |
 

@@ -76,5 +76,5 @@ public struct ControlReply: Codable, Sendable {
 }
 
 public enum AgentLightVersion {
-    public static let string = "0.3.0"
+    public static let string = "0.3.1"
 }
